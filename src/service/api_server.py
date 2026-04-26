@@ -39,6 +39,9 @@ class PredictInput(BaseModel):
     temperature: float = Field(..., description="Temperature in Celsius")
     is_holiday: int = Field(..., ge=0, le=1, description="Holiday flag (0 or 1)")
     is_maintenance: int = Field(..., ge=0, le=1, description="Maintenance flag (0 or 1)")
+    purchase_lag_1: Optional[float] = Field(None, description="Previous day purchase power (lag 1)")
+    purchase_lag_7: Optional[float] = Field(None, description="Purchase power 7 days ago (lag 7)")
+    purchase_rolling_7: Optional[float] = Field(None, description="7-day rolling average purchase power")
 
     class Config:
         json_schema_extra = {
@@ -237,12 +240,16 @@ def get_production_model() -> dict[str, Any]:
         )
 
     # Load model artifact
-    model_data = joblib.load(model_info["artifact_path"])
-    model = model_data["model"]
+    model_package = joblib.load(model_info["artifact_path"])
+    model = model_package["model"]
+    # Add features to model info
+    model_info["feature_list"] = model_package.get("features", model_info.get("feature_list", []))
+    model_info["algorithm"] = model_package.get("algorithm", model_info.get("model_name", "unknown"))
 
     return {
         "model": model,
         "model_info": model_info,
+        "model_package": model_package,
     }
 
 
@@ -747,34 +754,59 @@ def predict(input_data: PredictInput) -> dict[str, Any]:
     model = model_data["model"]
     model_info = model_data["model_info"]
     
-    # Prepare features
-    feature_list = model_info.get("feature_list", [
-        "weekday", "month", "temperature", "total_power",
-        "self_power", "steel_output", "rolling_output",
-        "is_holiday", "is_maintenance"
-    ])
+    # Get feature list from model
+    feature_list = model_info.get("feature_list", [])
+    if not feature_list:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="模型特征列表为空"
+        )
     
     # Parse date
     date_obj = datetime.strptime(input_data.date, "%Y-%m-%d")
     
     # Create feature dictionary
-    features = {
-        "weekday": date_obj.weekday(),
-        "month": date_obj.month,
-        "temperature": input_data.temperature,
-        "total_power": input_data.total_power,
-        "self_power": input_data.self_power,
-        "steel_output": input_data.steel_output,
-        "rolling_output": input_data.rolling_output,
-        "is_holiday": input_data.is_holiday,
-        "is_maintenance": input_data.is_maintenance
-    }
+    features = {}
     
-    # Create DataFrame for prediction
-    X = pd.DataFrame([features])
+    # Add time features
+    features["weekday"] = date_obj.weekday()
+    features["month"] = date_obj.month
+    features["is_weekend"] = 1 if date_obj.weekday() >=5 else 0
+    
+    # Add input features
+    features["temperature"] = input_data.temperature
+    features["total_power"] = input_data.total_power
+    features["self_power"] = input_data.self_power
+    features["steel_output"] = input_data.steel_output
+    features["rolling_output"] = input_data.rolling_output
+    features["is_holiday"] = input_data.is_holiday
+    features["is_maintenance"] = input_data.is_maintenance
+    
+    # Add lag features if provided
+    if input_data.purchase_lag_1 is not None:
+        features["purchase_lag_1"] = input_data.purchase_lag_1
+    if input_data.purchase_lag_7 is not None:
+        features["purchase_lag_7"] = input_data.purchase_lag_7
+    if input_data.purchase_rolling_7 is not None:
+        features["purchase_rolling_7"] = input_data.purchase_rolling_7
+    
+    # Check for missing required features
+    missing_features = []
+    for feature in feature_list:
+        if feature not in features:
+            missing_features.append(feature)
+    
+    if missing_features:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"缺少必要的特征: {', '.join(missing_features)}。请在请求中提供这些特征。"
+        )
+    
+    # Create DataFrame for prediction and reorder to match training order
+    X = pd.DataFrame([features])[feature_list]
     
     # Make prediction
-    prediction = model.predict(X[feature_list])[0]
+    prediction = model.predict(X)[0]
     
     return {
         "date": input_data.date,

@@ -168,10 +168,17 @@ uvicorn src.service.api_server:app --reload --host 0.0.0.0 --port 8000
 
 启动后可访问：
 - `GET http://localhost:8000/health` - 健康检查
-- `GET http://localhost:8000/model/current` - 当前生产模型信息
-- `GET http://localhost:8000/model/list` - 所有模型版本
-- `POST http://localhost:8000/model/promote/{version}` - 发布模型
-- `POST http://localhost:8000/predict` - 单条预测
+- `GET http://localhost:8000/api/dashboard/summary` - 仪表盘汇总数据
+- `GET http://localhost:8000/api/models` - 所有模型版本
+- `GET http://localhost:8000/api/models/current` - 当前生产模型信息
+- `GET http://localhost:8000/api/models/{version}` - 指定版本模型信息
+- `POST http://localhost:8000/api/models/{version}/promote` - 发布模型到生产
+- `POST http://localhost:8000/api/models/{version}/rollback` - 回滚到指定版本
+- `GET http://localhost:8000/api/evaluation/{version}` - 模型评估结果
+- `GET http://localhost:8000/api/predictions` - 预测历史记录
+- `GET http://localhost:8000/api/training/jobs` - 训练任务列表
+- `POST http://localhost:8000/api/training/jobs` - 创建训练任务
+- `POST http://localhost:8000/api/predict` - 单条预测
 
 **预测请求示例：**
 ```json
@@ -183,9 +190,13 @@ uvicorn src.service.api_server:app --reload --host 0.0.0.0 --port 8000
     "rolling_output": 720.0,
     "temperature": 5.0,
     "is_holiday": 0,
-    "is_maintenance": 0
+    "is_maintenance": 0,
+    "purchase_lag_1": 850.5,
+    "purchase_lag_7": 820.3,
+    "purchase_rolling_7": 835.2
 }
 ```
+> ⚠️ **注意**：如果当前生产模型的特征列表包含滞后特征 `purchase_lag_1`/`purchase_lag_7`/`purchase_rolling_7`，则请求中必须提供这些字段，否则会返回400错误。
 
 ---
 
@@ -215,10 +226,19 @@ npm run dev
 ### 状态流转
 
 ```
-candidate（候选）→ production（生产）→ archived（归档）
+candidate（候选）→ staging（预发）→ production（生产）→ archived（归档）
+      ↓                ↓
+   rejected（已拒绝）  rejected（已拒绝）
       ↑                    ↓
       ←──── rollback ──────←
 ```
+
+**状态说明：**
+- `candidate`：新训练完成的候选模型，等待评估
+- `staging`：通过评估的预发布模型，待上线验证
+- `production`：当前正在线上使用的生产模型
+- `archived`：已下线归档的历史模型
+- `rejected`：评估未通过，被拒绝上线的模型
 
 ### CLI 命令
 
@@ -234,6 +254,18 @@ python -m src.registry.model_registry promote v20260426_001
 
 # 回滚模型
 python -m src.registry.model_registry rollback v20260426_001
+
+# 拒绝模型
+python -m src.registry.model_registry reject v20260426_001 --reason "MAPE超过阈值"
+
+# 归档模型
+python -m src.registry.model_registry archive v20260426_001
+
+# 评估当前生产模型
+python -m src.models.evaluate_model
+
+# 评估指定版本模型
+python -m src.models.evaluate_model --version v20260426_001
 ```
 
 ---

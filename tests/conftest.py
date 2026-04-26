@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import pytest
 import sys
+import subprocess
 from pathlib import Path
 
 # Add project root to path
@@ -13,8 +14,16 @@ sys.path.insert(0, str(project_root))
 
 @pytest.fixture
 def sample_data_path() -> Path:
-    """Path to sample power data."""
-    return project_root / "data" / "raw" / "sample_power_data.csv"
+    """Path to sample power data, auto-generate if not exists."""
+    data_path = project_root / "data" / "raw" / "sample_power_data.csv"
+    if not data_path.exists():
+        # Generate sample data if not exists
+        subprocess.run(
+            [sys.executable, str(project_root / "scripts" / "generate_sample_data.py")],
+            cwd=project_root,
+            capture_output=True
+        )
+    return data_path
 
 
 @pytest.fixture

@@ -58,12 +58,12 @@ random_forest_params:
 
 # 模型效果阈值，用于后续验收和上线判断
 evaluation:
-  # 全量样本最大允许 MAPE，0.15 表示 15%
-  max_mape: 0.15
-  # 峰值时段最大允许 MAPE，0.2 表示 20%
-  max_peak_mape: 0.2
-  # 相比上一版 production 模型的最小改进比例，0.03 表示至少提升 3%
-  min_improvement_rate: 0.03
+  # 全量样本最大允许 MAPE，15.0 表示 15%
+  max_mape: 15.0
+  # 峰值时段最大允许 MAPE，20.0 表示 20%
+  max_peak_mape: 20.0
+  # 相比上一版 production 模型的最小改进比例，3.0 表示至少提升 3%
+  min_improvement_rate: 3.0
 
 # 训练切分方式，time 表示按时间顺序切分
 split_strategy: time

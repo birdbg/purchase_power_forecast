@@ -52,7 +52,7 @@ class ModelRegistry:
     """
 
     # Valid model states
-    STATES = ["candidate", "production", "archived"]
+    STATES = ["candidate", "staging", "production", "archived", "rejected"]
 
     def __init__(
         self,
@@ -159,7 +159,7 @@ class ModelRegistry:
         return manifest
 
     def promote_to_production(self, model_id: str) -> dict[str, Any]:
-        """Promote a candidate model to production.
+        """Promote a candidate or staging model to production.
 
         This method:
             1. Sets the specified model status to 'production'
@@ -175,14 +175,19 @@ class ModelRegistry:
 
         Raises:
             ModelNotFoundError: If model_id not found.
+            InvalidStateError: If model is in rejected state.
         """
         registry = self._load_registry()
         production_status = "production"
         archived_status = "archived"
 
         found = False
+        target_model = None
         for model in registry.get("models", []):
             if model.get("model_id") == model_id:
+                target_model = model
+                if model.get("status") == "rejected":
+                    raise InvalidStateError(f"Cannot promote rejected model: {model_id}")
                 model["status"] = production_status
                 model["promoted_at"] = datetime.now().isoformat()
                 found = True
@@ -259,6 +264,81 @@ class ModelRegistry:
             json.dump(manifest, f, ensure_ascii=False, indent=2)
 
         return manifest
+    
+    def reject_model(self, model_id: str, reason: str | None = None) -> dict[str, Any]:
+        """Reject a model version.
+
+        Args:
+            model_id: ID of the model to reject.
+            reason: Optional reason for rejection.
+
+        Returns:
+            The updated model manifest.
+        """
+        registry = self._load_registry()
+        
+        found = False
+        for model in registry.get("models", []):
+            if model.get("model_id") == model_id:
+                if model.get("status") == "production":
+                    raise InvalidStateError(f"Cannot reject production model: {model_id}")
+                model["status"] = "rejected"
+                model["rejected_at"] = datetime.now().isoformat()
+                model["rejection_reason"] = reason
+                found = True
+        
+        if not found:
+            raise ModelNotFoundError(f"Model not found: {model_id}")
+        
+        registry["updated_at"] = datetime.now().isoformat()
+        self._save_registry(registry)
+        
+        # Update manifest file
+        manifest = self.get_model_info(model_id)
+        manifest["status"] = "rejected"
+        manifest["rejected_at"] = registry["updated_at"]
+        manifest["rejection_reason"] = reason
+        manifest_file = self.model_dir / model_id / "manifest.json"
+        with open(manifest_file, "w", encoding="utf-8") as f:
+            json.dump(manifest, f, ensure_ascii=False, indent=2)
+        
+        return manifest
+    
+    def archive_model(self, model_id: str) -> dict[str, Any]:
+        """Archive a model version.
+
+        Args:
+            model_id: ID of the model to archive.
+
+        Returns:
+            The updated model manifest.
+        """
+        registry = self._load_registry()
+        
+        found = False
+        for model in registry.get("models", []):
+            if model.get("model_id") == model_id:
+                if model.get("status") == "production":
+                    raise InvalidStateError(f"Cannot archive production model: {model_id}. Please rollback first.")
+                model["status"] = "archived"
+                model["archived_at"] = datetime.now().isoformat()
+                found = True
+        
+        if not found:
+            raise ModelNotFoundError(f"Model not found: {model_id}")
+        
+        registry["updated_at"] = datetime.now().isoformat()
+        self._save_registry(registry)
+        
+        # Update manifest file
+        manifest = self.get_model_info(model_id)
+        manifest["status"] = "archived"
+        manifest["archived_at"] = registry["updated_at"]
+        manifest_file = self.model_dir / model_id / "manifest.json"
+        with open(manifest_file, "w", encoding="utf-8") as f:
+            json.dump(manifest, f, ensure_ascii=False, indent=2)
+        
+        return manifest
 
     def get_production_model_info(self) -> dict[str, Any]:
         """Get the current production model manifest.
@@ -328,8 +408,10 @@ class ModelRegistry:
             "total_versions": len(models),
             "production_model_id": registry.get("production_model_id"),
             "candidate_count": sum(1 for m in models if m.get("status") == "candidate"),
+            "staging_count": sum(1 for m in models if m.get("status") == "staging"),
             "production_count": sum(1 for m in models if m.get("status") == "production"),
             "archived_count": sum(1 for m in models if m.get("status") == "archived"),
+            "rejected_count": sum(1 for m in models if m.get("status") == "rejected"),
         }
 
         return summary
@@ -415,6 +497,39 @@ def _create_parser() -> argparse.ArgumentParser:
         help="模型存储目录"
     )
 
+    # reject command
+    reject_parser = subparsers.add_parser("reject", help="拒绝指定模型版本")
+    reject_parser.add_argument("model_id", help="模型版本ID")
+    reject_parser.add_argument(
+        "--reason",
+        default=None,
+        help="拒绝原因"
+    )
+    reject_parser.add_argument(
+        "--model-name",
+        default="purchase_power",
+        help="模型名称"
+    )
+    reject_parser.add_argument(
+        "--store-dir",
+        default="model_store",
+        help="模型存储目录"
+    )
+
+    # archive command
+    archive_parser = subparsers.add_parser("archive", help="归档指定模型版本")
+    archive_parser.add_argument("model_id", help="模型版本ID")
+    archive_parser.add_argument(
+        "--model-name",
+        default="purchase_power",
+        help="模型名称"
+    )
+    archive_parser.add_argument(
+        "--store-dir",
+        default="model_store",
+        help="模型存储目录"
+    )
+
     # info command
     info_parser = subparsers.add_parser("info", help="查看生产模型信息")
     info_parser.add_argument(
@@ -457,8 +572,10 @@ def main() -> None:
 
                     status_symbol = {
                         "candidate": "[候选]",
+                        "staging": "[预发]",
                         "production": "[生产]",
-                        "archived": "[归档]"
+                        "archived": "[归档]",
+                        "rejected": "[已拒绝]"
                     }.get(status, f"[{status}]")
 
                     print(f"\n  {status_symbol} {model_id}")
@@ -469,8 +586,10 @@ def main() -> None:
             summary = registry.get_registry_summary()
             print(f"总计: {summary['total_versions']} 个版本")
             print(f"  候选: {summary['candidate_count']}")
+            print(f"  预发: {summary['staging_count']}")
             print(f"  生产: {summary['production_count']}")
             print(f"  归档: {summary['archived_count']}")
+            print(f"  已拒绝: {summary['rejected_count']}")
             print("=" * 60)
 
         elif args.command == "promote":
@@ -486,6 +605,22 @@ def main() -> None:
             print(f"\n✅ 模型已回滚")
             print(f"   模型ID: {manifest['model_id']}")
             print(f"   回滚时间: {manifest.get('rolled_back_at')}")
+
+        elif args.command == "reject":
+            print(f"正在拒绝模型 {args.model_id}...")
+            manifest = registry.reject_model(args.model_id, args.reason)
+            print(f"\n✅ 模型已拒绝")
+            print(f"   模型ID: {manifest['model_id']}")
+            print(f"   拒绝时间: {manifest.get('rejected_at')}")
+            if args.reason:
+                print(f"   拒绝原因: {args.reason}")
+
+        elif args.command == "archive":
+            print(f"正在归档模型 {args.model_id}...")
+            manifest = registry.archive_model(args.model_id)
+            print(f"\n✅ 模型已归档")
+            print(f"   模型ID: {manifest['model_id']}")
+            print(f"   归档时间: {manifest.get('archived_at')}")
 
         elif args.command == "info":
             manifest = registry.get_production_model_info()

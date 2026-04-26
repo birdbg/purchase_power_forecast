@@ -132,12 +132,19 @@ class ModelRegistry:
         manifest = {
             "model_id": model_id,
             "model_name": self.model_name,
+            "algorithm": metadata.get("algorithm") if metadata else None,
+            "params": metadata.get("params") if metadata else None,
+            "target": metadata.get("target") if metadata else None,
+            "train_data_start": metadata.get("train_data_start") if metadata else None,
+            "train_data_end": metadata.get("train_data_end") if metadata else None,
+            "created_at": metadata.get("created_at") if metadata else None,
             "status": "candidate",
             "registered_at": datetime.now().isoformat(),
             "artifact_path": str(dest_artifact),
             "feature_list_path": str(feature_list_file),
             "metrics_path": str(metrics_file),
             "feature_list": feature_list,
+            "metrics": metrics,
             "metrics": metrics,
         }
         if metadata:
@@ -175,42 +182,57 @@ class ModelRegistry:
 
         Raises:
             ModelNotFoundError: If model_id not found.
-            InvalidStateError: If model is in rejected state.
+            InvalidStateError: If model transition is invalid.
         """
         registry = self._load_registry()
         production_status = "production"
         archived_status = "archived"
-
-        found = False
-        target_model = None
-        for model in registry.get("models", []):
-            if model.get("model_id") == model_id:
-                target_model = model
-                if model.get("status") == "rejected":
-                    raise InvalidStateError(f"Cannot promote rejected model: {model_id}")
-                model["status"] = production_status
-                model["promoted_at"] = datetime.now().isoformat()
-                found = True
-            elif model.get("status") == production_status:
-                model["status"] = archived_status
-                model["archived_at"] = datetime.now().isoformat()
-
-        if not found:
+        
+        # Find target model
+        model = next((m for m in registry.get("models", []) if m.get("model_id") == model_id), None)
+        if not model:
             raise ModelNotFoundError(f"Model not found: {model_id}")
 
+        # Validate state transition
+        if model.get("status") == production_status:
+            raise InvalidStateError(f"Model is already in production: {model_id}")
+        if model.get("status") not in ["candidate", "staging"]:
+            raise InvalidStateError(f"Cannot promote model with status '{model.get('status')}'. Only candidate or staging models can be promoted.")
+
+        # Find existing production models and archive them
+        existing_production = [m for m in registry.get("models", []) if m.get("status") == production_status]
+        for prod_model in existing_production:
+            prod_model["status"] = archived_status
+            prod_model["archived_at"] = datetime.now().isoformat()
+            # Update manifest file
+            prod_manifest_path = Path(prod_model.get("artifact_path")).parent / "manifest.json"
+            if prod_manifest_path.exists():
+                with open(prod_manifest_path, "r", encoding="utf-8") as f:
+                    prod_manifest = json.load(f)
+                prod_manifest.update(prod_model)
+                with open(prod_manifest_path, "w", encoding="utf-8") as f:
+                    json.dump(prod_manifest, f, ensure_ascii=False, indent=2)
+        
+        # Update target model to production
+        model["status"] = production_status
+        model["promoted_at"] = datetime.now().isoformat()
         registry["production_model_id"] = model_id
+        
+        # Update manifest file
+        manifest_path = Path(model.get("artifact_path")).parent / "manifest.json"
+        if manifest_path.exists():
+            with open(manifest_path, "r", encoding="utf-8") as f:
+                manifest = json.load(f)
+            manifest.update(model)
+            with open(manifest_path, "w", encoding="utf-8") as f:
+                json.dump(manifest, f, ensure_ascii=False, indent=2)
+        
+        # Save registry
         registry["updated_at"] = datetime.now().isoformat()
         self._save_registry(registry)
-
-        # Also update the manifest file
-        manifest = self.get_model_info(model_id)
-        manifest["status"] = production_status
-        manifest["promoted_at"] = registry["updated_at"]
-        manifest_file = self.model_dir / model_id / "manifest.json"
-        with open(manifest_file, "w", encoding="utf-8") as f:
-            json.dump(manifest, f, ensure_ascii=False, indent=2)
-
-        return manifest
+        
+        # Get updated manifest
+        return self.get_model_info(model_id)
 
     def rollback(self, model_id: str) -> dict[str, Any]:
         """Rollback a model to production status.
@@ -218,50 +240,65 @@ class ModelRegistry:
         This method:
             1. Archives the current production model
             2. Sets the specified model to production
-
+            
+        Only archived models can be rolled back.
+        
         Args:
-            model_id: ID of the model to rollback to.
-
+            model_id: ID of the model to rollback.
+            
         Returns:
             The rolled back model manifest.
-
+            
         Raises:
             ModelNotFoundError: If model_id not found.
+            InvalidStateError: If model transition is invalid.
         """
         registry = self._load_registry()
         production_status = "production"
         archived_status = "archived"
-
-        # Archive current production
-        for model in registry.get("models", []):
-            if model.get("status") == production_status:
-                model["status"] = archived_status
-                model["archived_at"] = datetime.now().isoformat()
-
-        # Promote specified model
-        found = False
-        for model in registry.get("models", []):
-            if model.get("model_id") == model_id:
-                model["status"] = production_status
-                model["promoted_at"] = datetime.now().isoformat()
-                model["rolled_back_at"] = datetime.now().isoformat()
-                found = True
-
-        if not found:
-            raise ModelNotFoundError(f"Model not found for rollback: {model_id}")
-
-        registry["production_model_id"] = model_id
+        
+        # Find the model to rollback
+        model = next((m for m in registry.get("models", []) if m.get("model_id") == model_id), None)
+        if not model:
+            raise ModelNotFoundError(f"Model not found: {model_id}")
+        
+        # Validate state transition
+        current_status = model.get("status")
+        if current_status != archived_status:
+            raise InvalidStateError(f"Cannot rollback model {model_id} with status {current_status}. Only archived models can be rolled back.")
+        
+        # Find existing production models and archive them
+        existing_production = [m for m in registry.get("models", []) if m.get("status") == production_status]
+        for prod_model in existing_production:
+            prod_model["status"] = archived_status
+            prod_model["archived_at"] = datetime.now().isoformat()
+            # Update manifest file
+            prod_manifest_path = Path(prod_model.get("artifact_path")).parent / "manifest.json"
+            if prod_manifest_path.exists():
+                with open(prod_manifest_path, "r", encoding="utf-8") as f:
+                    prod_manifest = json.load(f)
+                prod_manifest.update(prod_model)
+                with open(prod_manifest_path, "w", encoding="utf-8") as f:
+                    json.dump(prod_manifest, f, ensure_ascii=False, indent=2)
+        
+        # Update target model to production
+        model["status"] = production_status
+        model["rolled_back_at"] = datetime.now().isoformat()
+        
+        # Update manifest file
+        manifest_path = Path(model.get("artifact_path")).parent / "manifest.json"
+        if manifest_path.exists():
+            with open(manifest_path, "r", encoding="utf-8") as f:
+                manifest = json.load(f)
+            manifest.update(model)
+            with open(manifest_path, "w", encoding="utf-8") as f:
+                json.dump(manifest, f, ensure_ascii=False, indent=2)
+        
+        # Save registry
         registry["updated_at"] = datetime.now().isoformat()
         self._save_registry(registry)
-
-        # Also update the manifest file
-        manifest = self.get_model_info(model_id)
-        manifest["status"] = production_status
-        manifest["promoted_at"] = registry["updated_at"]
-        manifest["rolled_back_at"] = registry["updated_at"]
-        manifest_file = self.model_dir / model_id / "manifest.json"
-        with open(manifest_file, "w", encoding="utf-8") as f:
-            json.dump(manifest, f, ensure_ascii=False, indent=2)
+        
+        return model
 
         return manifest
     
@@ -676,12 +713,13 @@ def register_candidate_model(
     import json
 
     # Read metadata to get feature_columns
+    metadata = {}
     feature_list = []
     try:
         with open(metadata_path, "r", encoding="utf-8") as f:
             metadata = json.load(f)
             # Handle both feature_columns (from train_model) and feature_list keys
-            feature_list = metadata.get("feature_columns", []) or metadata.get("feature_list", [])
+            feature_list = metadata.get("feature_columns", []) or metadata.get("feature_list", []) or metadata.get("features", [])
             if not feature_list:
                 # Try to get from model config
                 from src.data.load_data import load_config
@@ -692,7 +730,7 @@ def register_candidate_model(
         pass
 
     registry = ModelRegistry(
-        model_name="purchase_power",
+        model_name=model_name,
         store_dir=model_config.get("registry", {}).get("model_store_dir", "model_store"),
     )
     return registry.register_model(
@@ -700,6 +738,7 @@ def register_candidate_model(
         model_artifact_path=artifact_path,
         feature_list=feature_list,
         metrics=metrics,
+        metadata=metadata,
     )
 
 

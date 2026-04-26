@@ -76,6 +76,9 @@ def train_model(
     print(f"\n[步骤 1/6] 加载原始数据...")
     raw_df = load_tabular_data(data_path)
     print(f"  原始数据: {raw_df.shape[0]} 行, {raw_df.shape[1]} 列")
+    datetime_col = data_config.get("datetime_col", "date")
+    train_data_start = raw_df[datetime_col].min().isoformat()
+    train_data_end = raw_df[datetime_col].max().isoformat()
 
     # Clean data
     print(f"\n[步骤 2/6] 清洗数据...")
@@ -116,7 +119,8 @@ def train_model(
 
     # Generate model version
     selected_model = model_name or model_config.get("algorithm", "xgboost")
-    model_id = f"{selected_model}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+    config_model_name = model_config.get("model_name", "purchase_power")
+    model_id = f"v{datetime.now().strftime('%Y%m%d_%H%M%S')}"
 
     # Create model directory
     model_store_dir = Path(model_config.get("registry", {}).get("model_store_dir", "model_store"))
@@ -154,15 +158,17 @@ def train_model(
 
     metadata = {
         "model_id": model_id,
-        "model_name": selected_model,
-        "status": model_config.get("registry", {}).get("candidate_status", "candidate"),
-        "created_at": created_at,
-        "target_column": target_col,
-        "feature_columns": feature_cols,
-        "metrics": metrics,
-        "data_path": str(data_path),
+        "model_name": config_model_name,
         "algorithm": selected_model,
         "params": params,
+        "target": target_col,
+        "features": feature_cols,
+        "metrics": metrics,
+        "train_data_start": train_data_start,
+        "train_data_end": train_data_end,
+        "created_at": created_at,
+        "data_path": str(data_path),
+        "status": model_config.get("registry", {}).get("candidate_status", "candidate"),
     }
 
     # Save metadata JSON
@@ -173,7 +179,7 @@ def train_model(
     register_candidate_model(
         model_config=model_config,
         model_id=model_id,
-        model_name=selected_model,
+        model_name=config_model_name,
         artifact_path=str(artifact_path),
         metadata_path=str(metadata_path),
         metrics=metrics,

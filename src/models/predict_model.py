@@ -135,36 +135,29 @@ def predict(
     if len(feature_df) == 0:
         raise PredictionError("特征工程后没有有效数据进行预测")
 
-    # Get feature columns that exist in the DataFrame
-    available_features = [f for f in feature_list if f in feature_df.columns]
+    # Validate all required features are present
+    missing_features = [f for f in feature_list if f not in feature_df.columns]
+    if missing_features:
+        raise PredictionError(
+            f"输入数据缺少模型所需的特征: {', '.join(missing_features)}. "
+            f"请确保输入数据包含所有滞后特征 (purchase_lag_1, purchase_lag_7, purchase_rolling_7)。"
+        )
 
-    if len(available_features) == 0:
-        raise PredictionError("没有可用的特征列进行预测")
+    # Check for NaN values in features
+    X_pred = feature_df[feature_list].copy()
+    nan_mask = X_pred.isna().any(axis=1)
+    if nan_mask.any():
+        nan_rows = nan_mask[nan_mask].index.tolist()
+        nan_features = X_pred.columns[X_pred.isna().any()].tolist()
+        raise PredictionError(
+            f"输入数据存在缺失值。行: {nan_rows[:5]} (共 {len(nan_rows)} 行), "
+            f"缺失特征: {', '.join(nan_features)}. 请检查输入数据并补全所有特征值。"
+        )
 
-    # Check for NaN in features and handle appropriately
-    X_pred = feature_df[available_features].copy()
-
-    # For features not in model but required, add as NaN
-    for f in feature_list:
-        if f not in X_pred.columns:
-            X_pred[f] = None
-
-    # Reorder to match training order
-    X_pred = X_pred[feature_list]
-
-    # Check for rows with all NaN features
-    valid_mask = ~X_pred.isna().all(axis=1)
-    if not valid_mask.any():
-        raise PredictionError("所有行都没有有效的特征值")
-
-    # Use only rows with valid features for prediction
-    X_pred_valid = X_pred[valid_mask]
-    feature_df_valid = feature_df[valid_mask]
-
-    print(f"  有效预测行数: {len(X_pred_valid)}")
+    print(f"  有效预测行数: {len(X_pred)}")
 
     # Make predictions
-    predictions = model.predict(X_pred_valid)
+    predictions = model.predict(X_pred)
 
     # Create output DataFrame matching original row count
     output_df = raw_df.copy()

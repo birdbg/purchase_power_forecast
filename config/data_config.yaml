@@ -1,0 +1,42 @@
+# 原始训练数据路径，通常放历史外购电和相关业务指标
+raw_data_path: data/raw/sample_power_data.csv
+
+# 清洗和特征处理后的训练数据输出路径
+processed_data_path: data/processed/processed_history.csv
+
+# 预测输入数据路径，用于未来日期或待预测批次数据
+prediction_input_path: data/prediction/predict_input.csv
+
+# 模型存储目录，保存训练产物和模型注册表
+model_store_path: model_store
+
+# 时间列字段名，代码会按该字段排序并生成时间特征
+datetime_col: date
+
+# 目标列字段名，即外购电量
+target_col: purchase_power
+
+# 训练集/测试集划分比例，0.2 表示 20% 作为测试集
+train_test_split_ratio: 0.2
+
+# 时间粒度，当前默认按天建模
+time_granularity: daily
+
+# 原始数据中的基础输入字段，便于清洗和特征工程直接读取
+base_features:
+  - total_power
+  - self_power
+  - steel_output
+  - rolling_output
+  - temperature
+  - is_holiday
+  - is_maintenance
+
+# 类别特征字段，当前版本为空，后续可扩展班次、天气类型等枚举字段
+categorical_features: []
+
+# 数据清洗策略
+cleaning:
+  drop_rows_without_target: true
+  numeric_missing_strategy: median
+  categorical_missing_strategy: most_frequent

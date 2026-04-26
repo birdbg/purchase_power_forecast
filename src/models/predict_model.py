@@ -184,6 +184,7 @@ def predict(
         output_column,
         "model_name",
         "model_version",
+        "algorithm",
         "predict_time",
     ]
     # Only include columns that exist

@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any
 
 import yaml
+import pandas as pd
 
 # Import data processing modules
 from src.data.load_data import load_tabular_data, load_config, get_data_path
@@ -76,6 +77,10 @@ def train_model(
     print(f"\n[步骤 1/6] 加载原始数据...")
     raw_df = load_tabular_data(data_path)
     print(f"  原始数据: {raw_df.shape[0]} 行, {raw_df.shape[1]} 列")
+    
+    # Convert date column to datetime type
+    datetime_col = data_config.get("datetime_col", "date")
+    raw_df[datetime_col] = pd.to_datetime(raw_df[datetime_col])
     datetime_col = data_config.get("datetime_col", "date")
     train_data_start = raw_df[datetime_col].min().isoformat()
     train_data_end = raw_df[datetime_col].max().isoformat()

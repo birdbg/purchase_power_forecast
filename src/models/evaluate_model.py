@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any, Optional
 import joblib
 import pandas as pd
+import yaml
 from src.data.load_data import load_tabular_data, load_config, get_data_path, DataLoadError
 from src.data.clean_data import clean_power_data
 from src.features.build_features import build_training_dataset
@@ -137,6 +138,7 @@ def _write_json(path: Path, payload: dict[str, Any]) -> None:
 def main() -> None:
     """Command-line entry point for model evaluation."""
     import yaml
+    import pandas as pd
     parser = argparse.ArgumentParser(description="评估外购电预测模型")
     parser.add_argument(
         "--version",

@@ -1,0 +1,407 @@
+/* 工业能源管理系统全局样式 */
+:root {
+  /* 主色调 - 工业蓝 */
+  --primary-color: #165DFF;
+  --primary-light: #E8F3FF;
+  --primary-dark: #0E42D2;
+
+  /* 功能色 */
+  --success-color: #00B42A;
+  --success-light: #E8FFEA;
+  --warning-color: #FF7D00;
+  --warning-light: #FFF7E8;
+  --danger-color: #F53F3F;
+  --danger-light: #FFECE8;
+
+  /* 中性色 */
+  --gray-100: #F2F3F5;
+  --gray-200: #E5E6EB;
+  --gray-300: #C9CDD4;
+  --gray-400: #86909C;
+  --gray-500: #4E5969;
+  --gray-600: #272E3B;
+  --gray-700: #1D2129;
+  --gray-800: #0A0C10;
+
+  /* 侧边栏深色 */
+  --sider-bg: #001628;
+  --sider-menu-selected: #003471;
+  --sider-menu-hover: rgba(22, 93, 255, 0.1);
+
+  /* 布局 */
+  --header-height: 64px;
+  --sider-width: 240px;
+  --border-radius: 6px;
+  --card-shadow: 0 2px 12px rgba(0, 0, 0, 0.06);
+  --card-hover-shadow: 0 4px 16px rgba(0, 0, 0, 0.1);
+}
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+html {
+  /* 适配不同屏幕宽度 */
+  font-size: 16px;
+}
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial,
+    'Noto Sans', sans-serif, 'Apple Color Emoji', 'Segoe UI Emoji', 'Segoe UI Symbol',
+    'Noto Color Emoji';
+  background-color: var(--gray-100);
+  color: var(--gray-700);
+  line-height: 1.5;
+}
+
+#root {
+  width: 100%;
+  height: 100vh;
+  overflow-x: hidden;
+}
+
+/* 全局布局 */
+.ant-layout {
+  height: 100vh;
+  background: var(--gray-100);
+}
+
+/* 左侧侧边栏 */
+.ant-layout-sider {
+  background: var(--sider-bg) !important;
+  box-shadow: 2px 0 8px rgba(0, 0, 0, 0.15);
+}
+
+.ant-menu-dark {
+  background: var(--sider-bg) !important;
+}
+
+.ant-menu-dark .ant-menu-item-selected {
+  background-color: var(--sider-menu-selected) !important;
+  border-left: 3px solid var(--primary-color);
+  color: #fff !important;
+}
+
+.ant-menu-dark .ant-menu-item:hover {
+  background-color: var(--sider-menu-hover) !important;
+}
+
+/* 顶部 Header */
+.ant-layout-header {
+  background: #fff !important;
+  height: var(--header-height) !important;
+  line-height: var(--header-height) !important;
+  padding: 0 24px !important;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+/* 内容区域 */
+.ant-layout-content {
+  overflow: auto;
+  width: 100%;
+}
+
+/* 卡片样式统一 */
+.ant-card {
+  border-radius: var(--border-radius);
+  box-shadow: var(--card-shadow);
+  border: none;
+  transition: all 0.3s ease;
+  margin-bottom: 24px;
+}
+
+.ant-card:hover {
+  box-shadow: var(--card-hover-shadow);
+}
+
+.ant-card-head {
+  border-bottom: 1px solid var(--gray-200);
+  padding: 16px 24px;
+  font-weight: 600;
+  font-size: 16px;
+  color: var(--gray-700);
+}
+
+.ant-card-body {
+  padding: 24px;
+}
+
+/* 指标卡片 - 突出关键数字 */
+.metric-card {
+  text-align: left;
+  background: linear-gradient(135deg, #ffffff 0%, #f8faff 100%);
+  border-left: 4px solid var(--primary-color);
+}
+
+.metric-card .ant-card-head {
+  border-bottom: none;
+  padding-bottom: 0;
+  min-height: auto;
+}
+
+.metric-card .ant-card-body {
+  padding-top: 12px;
+  padding-bottom: 20px;
+}
+
+.metric-value {
+  font-size: 36px;
+  font-weight: 700;
+  color: var(--primary-color);
+  margin-bottom: 8px;
+  line-height: 1.2;
+  font-variant-numeric: tabular-nums;
+}
+
+.metric-value.success {
+  color: var(--success-color);
+}
+
+.metric-value.warning {
+  color: var(--warning-color);
+}
+
+.metric-value.danger {
+  color: var(--danger-color);
+}
+
+.metric-label {
+  font-size: 14px;
+  color: var(--gray-500);
+  font-weight: 500;
+  margin-bottom: 4px;
+}
+
+.metric-unit {
+  font-size: 14px;
+  color: var(--gray-400);
+  margin-left: 4px;
+}
+
+.metric-trend {
+  font-size: 12px;
+  margin-top: 4px;
+}
+
+.metric-trend.up {
+  color: var(--danger-color);
+}
+
+.metric-trend.down {
+  color: var(--success-color);
+}
+
+/* 状态标签颜色区分 */
+.status-tag-normal {
+  background-color: var(--success-light);
+  color: var(--success-color);
+  border-color: var(--success-color);
+}
+
+.status-tag-warning {
+  background-color: var(--warning-light);
+  color: var(--warning-color);
+  border-color: var(--warning-color);
+}
+
+.status-tag-abnormal {
+  background-color: var(--danger-light);
+  color: var(--danger-color);
+  border-color: var(--danger-color);
+}
+
+.status-tag-running {
+  background-color: var(--primary-light);
+  color: var(--primary-color);
+  border-color: var(--primary-color);
+}
+
+.status-tag-success {
+  background-color: var(--success-light);
+  color: var(--success-color);
+  border-color: var(--success-color);
+}
+
+.status-tag-failed {
+  background-color: var(--danger-light);
+  color: var(--danger-color);
+  border-color: var(--danger-color);
+}
+
+/* 误差率显示样式 */
+.error-rate {
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.error-rate.normal {
+  color: var(--success-color);
+}
+
+.error-rate.warning {
+  color: var(--warning-color);
+}
+
+.error-rate.abnormal {
+  color: var(--danger-color);
+}
+
+/* 表格样式优化 */
+.ant-table {
+  background: #fff;
+  border-radius: var(--border-radius);
+}
+
+.ant-table-thead > tr > th {
+  background: var(--gray-100);
+  font-weight: 600;
+  color: var(--gray-600);
+  border-bottom: 2px solid var(--gray-200);
+  padding: 14px 16px;
+}
+
+.ant-table-tbody > tr > td {
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--gray-200);
+}
+
+.ant-table-tbody > tr:hover > td {
+  background: var(--gray-100);
+}
+
+/* 表格操作按钮间距 */
+.table-action-buttons .ant-btn {
+  margin-right: 8px;
+  margin-bottom: 4px;
+}
+
+.table-action-buttons .ant-btn:last-child {
+  margin-right: 0;
+}
+
+/* 图表样式优化 */
+.chart-container {
+  width: 100%;
+  padding: 16px 0;
+}
+
+.chart-title {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--gray-700);
+  margin-bottom: 16px;
+  text-align: center;
+}
+
+.chart-legend {
+  font-size: 13px;
+  color: var(--gray-500);
+  margin-bottom: 12px;
+}
+
+.chart-axis-label {
+  font-size: 12px;
+  color: var(--gray-400);
+}
+
+.chart-unit {
+  font-size: 12px;
+  color: var(--gray-400);
+  margin-left: 4px;
+  font-weight: normal;
+}
+
+/* 按钮样式优化 */
+.ant-btn-primary {
+  background-color: var(--primary-color);
+  border-color: var(--primary-color);
+}
+
+.ant-btn-primary:hover {
+  background-color: var(--primary-dark);
+  border-color: var(--primary-dark);
+}
+
+/* 表单样式优化 */
+.ant-form-item-label > label {
+  font-weight: 500;
+  color: var(--gray-600);
+}
+
+/* 响应式适配 */
+@media screen and (max-width: 1440px) {
+  .ant-layout-content {
+    padding: 16px;
+  }
+
+  .ant-card-body {
+    padding: 16px;
+  }
+
+  .metric-value {
+    font-size: 32px;
+  }
+
+  .ant-table-thead > tr > th,
+  .ant-table-tbody > tr > td {
+    padding: 12px;
+  }
+}
+
+@media screen and (max-width: 1366px) {
+  :root {
+    --sider-width: 200px;
+  }
+
+  .metric-value {
+    font-size: 28px;
+  }
+
+  .ant-card-head {
+    padding: 12px 16px;
+  }
+
+  .ant-card-body {
+    padding: 16px;
+  }
+
+  /* 表格在小屏幕下支持横向滚动 */
+  .ant-table-wrapper {
+    overflow-x: auto;
+  }
+}
+
+@media screen and (max-width: 768px) {
+  .ant-layout-content {
+    padding: 12px;
+  }
+
+  .metric-value {
+    font-size: 24px;
+  }
+}
+
+/* 滚动条样式优化 */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--gray-200);
+  border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--gray-400);
+  border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--gray-500);
+}

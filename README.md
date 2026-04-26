@@ -51,6 +51,19 @@ purchase_power_forecast/
 │   ├── test_features.py
 │   ├── test_metrics.py
 │   └── test_registry.py
+├── frontend/                       # 前端管理平台
+│   ├── src/
+│   │   ├── api/                    # API 封装
+│   │   ├── components/             # 公共组件
+│   │   ├── layouts/                # 布局组件
+│   │   ├── pages/                  # 页面组件
+│   │   ├── types/                  # TypeScript 类型定义
+│   │   ├── mock/                   # 模拟数据
+│   │   └── styles/                 # 全局样式
+│   ├── index.html
+│   ├── vite.config.ts
+│   ├── package.json
+│   └── tsconfig.json
 ├── requirements.txt
 └── README.md
 ```
@@ -176,6 +189,27 @@ uvicorn src.service.api_server:app --reload --host 0.0.0.0 --port 8000
 
 ---
 
+### 6. 启动前端管理平台
+
+```bash
+cd frontend
+npm install
+npm run dev
+```
+
+启动后访问 `http://localhost:3000`，前端平台包含以下功能：
+- **系统总览**：仪表盘展示核心指标、预测趋势、误差趋势
+- **训练任务**：管理模型训练任务，查看训练状态和日志
+- **模型管理**：查看所有模型版本，支持发布、回滚、归档操作
+- **模型评估**：查看模型评估结果、指标、误差样本和可视化图表
+- **预测监控**：查看历史预测记录，监控误差和异常情况
+- **数据管理**：上传数据，查看数据质量报告，下载模板
+- **系统配置**：配置模型参数、评估阈值等
+
+> 💡 前端默认使用Mock数据，如需连接真实后端，请修改 `frontend/src/api/http.ts` 中的 `USE_MOCK = false`
+
+---
+
 ## 模型版本管理
 
 ### 状态流转
@@ -249,7 +283,7 @@ pytest tests/test_metrics.py
 - [ ] **Optuna 自动调参**：自动搜索最优超参数
 - [ ] **SHAP 特征解释**：解释模型预测，输出特征重要性
 - [ ] **数据库接入**：支持 PostgreSQL/MySQL 存储历史数据
-- [ ] **前端看板**：基于 Streamlit 或 Gradio 的可视化界面
+- ✅ **前端管理平台**：已完成 React + TypeScript + Ant Design 全功能管理平台
 
 ---
 

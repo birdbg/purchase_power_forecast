@@ -155,9 +155,9 @@ python -m src.models.predict_model
 
 **预测结果示例：**
 ```csv
-date,purchase_power,prediction_value,model_name,model_version,predict_time
-2025-01-25,,579.37,random_forest,v20260426_001,2026-04-26T19:07:45.178502
-2025-01-26,,879.07,random_forest,v20260426_001,2026-04-26T19:07:45.178502
+date,purchase_power,prediction_value,model_name,model_version,algorithm,predict_time
+2025-01-25,,579.37,purchase_power,v20260426_001,random_forest,2026-04-26T19:07:45.178502
+2025-01-26,,879.07,purchase_power,v20260426_001,random_forest,2026-04-26T19:07:45.178502
 ```
 
 ### 5. 启动 FastAPI 服务

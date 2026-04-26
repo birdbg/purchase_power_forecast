@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any, Optional
 import joblib
 import pandas as pd
-from src.data.load_data import load_tabular_data, load_config, get_data_path
+from src.data.load_data import load_tabular_data, load_config, get_data_path, DataLoadError
 from src.data.clean_data import clean_power_data
 from src.features.build_features import build_training_dataset
 from src.utils.metrics import evaluate_regression, print_metrics
@@ -77,10 +77,10 @@ def evaluate_model(
     print(f"  数据路径: {data_path}")
     try:
         raw_df = load_tabular_data(data_path)
-    except FileNotFoundError:
-        # Fallback to raw data if processed data not available
+    except (FileNotFoundError, DataLoadError):
+        # Fallback to raw data if processed data not available or load failed
         raw_data_path = get_data_path(data_config, "raw_data_path")
-        print(f"  处理后数据不存在，使用原始数据: {raw_data_path}")
+        print(f"  处理后数据不存在或读取失败，改用原始数据重新清洗和特征工程: {raw_data_path}")
         raw_df = load_tabular_data(raw_data_path)
     print(f"  数据行数: {len(raw_df)}")
     # Step 3: Data cleaning and feature engineering

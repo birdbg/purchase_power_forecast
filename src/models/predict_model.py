@@ -117,14 +117,15 @@ def predict(
     cleaned_df = clean_power_data(raw_df, data_config, training=False)
     print(f"  清洗后行数: {len(cleaned_df)}")
 
-    # Step 4: Feature engineering
+    # Step 4: Feature engineering (only generate date-based features, keep existing lag features)
     print(f"\n[步骤 4/5] 特征工程...")
-    # Sort by date first (required for lag features)
+    # Sort by date first
     feature_df = cleaned_df.sort_values(datetime_col).reset_index(drop=True)
 
-    # Build features using the model config
-    # Note: For prediction, we use build_features directly without dropping rows
-    feature_df = build_features(feature_df, data_config, model_config)
+    # Generate only date-based features, do not overwrite lag features
+    feature_df["weekday"] = feature_df[datetime_col].dt.weekday
+    feature_df["month"] = feature_df[datetime_col].dt.month
+    feature_df["is_weekend"] = (feature_df["weekday"] >= 5).astype(int)
 
     print(f"  特征工程后行数: {len(feature_df)}")
 
@@ -162,22 +163,18 @@ def predict(
     # Create output DataFrame matching original row count
     output_df = raw_df.copy()
     output_column = "prediction_value"
-    output_df[output_column] = None
-
-    # Map predictions back to original rows
-    # valid_mask tells us which rows in feature_df are valid
-    # We need to map these back to the original raw_df indices
-    feature_df_indices = feature_df_valid.index.tolist()
-
-    for i, feat_idx in enumerate(feature_df_indices):
-        # Find the corresponding index in raw_df
-        if feat_idx < len(output_df):
-            output_df.loc[feat_idx, output_column] = predictions[i]
+    
+    # Ensure prediction count matches input rows
+    if len(predictions) != len(output_df):
+        raise PredictionError(f"预测行数 ({len(predictions)}) 与输入行数 ({len(output_df)}) 不一致")
+    
+    output_df[output_column] = predictions
 
     # Add metadata columns
     predict_time = datetime.now().isoformat()
     output_df["model_name"] = model_info["model_name"]
     output_df["model_version"] = model_info["model_id"]
+    output_df["algorithm"] = model_package.get("algorithm", model_info.get("algorithm"))
     output_df["predict_time"] = predict_time
 
     # Select and reorder output columns

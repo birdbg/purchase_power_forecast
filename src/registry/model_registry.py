@@ -145,7 +145,6 @@ class ModelRegistry:
             "metrics_path": str(metrics_file),
             "feature_list": feature_list,
             "metrics": metrics,
-            "metrics": metrics,
         }
         if metadata:
             manifest.update(metadata)
@@ -284,6 +283,7 @@ class ModelRegistry:
         # Update target model to production
         model["status"] = production_status
         model["rolled_back_at"] = datetime.now().isoformat()
+        registry["production_model_id"] = model_id
         
         # Update manifest file
         manifest_path = Path(model.get("artifact_path")).parent / "manifest.json"
@@ -299,8 +299,6 @@ class ModelRegistry:
         self._save_registry(registry)
         
         return model
-
-        return manifest
     
     def reject_model(self, model_id: str, reason: str | None = None) -> dict[str, Any]:
         """Reject a model version.

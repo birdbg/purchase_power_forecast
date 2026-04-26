@@ -146,6 +146,11 @@ print(f"外购电量偏差均值: {df['diff_ratio'].mean():.2%}")
 # 清理临时列
 df = df.drop(columns=['calc_purchase', 'diff_ratio'])
 
+# 计算滞后特征和滚动特征
+df['purchase_lag_1'] = df['purchase_power'].shift(1)
+df['purchase_lag_7'] = df['purchase_power'].shift(7)
+df['purchase_rolling_7'] = df['purchase_power'].shift(1).rolling(window=7, min_periods=1).mean()
+
 # 保存到 CSV
 output_path = 'data/raw/sample_power_data.csv'
 df.to_csv(output_path, index=False, date_format='%Y-%m-%d')

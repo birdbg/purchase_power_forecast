@@ -321,10 +321,20 @@ def _quality_check_dataframe(df: pd.DataFrame) -> dict[str, Any]:
 
     row_count_warning = 1 if len(df) < 30 else 0
     date_range = "-"
+    date_sorted = True
+    date_parse_error_count = 0
+    
     if "date" in df.columns:
-        dates = pd.to_datetime(df["date"], errors="coerce").dropna()
-        if len(dates) > 0:
-            date_range = f"{dates.min().date()} ~ {dates.max().date()}"
+        dates = pd.to_datetime(df["date"], errors="coerce")
+        date_parse_error_count = int(dates.isna().sum())
+        valid_dates = dates.dropna()
+        
+        if len(valid_dates) > 0:
+            date_range = f"{valid_dates.min().date()} ~ {valid_dates.max().date()}"
+            
+            # Check if dates are sorted ascending
+            if not valid_dates.is_monotonic_increasing:
+                date_sorted = False
 
     results = [
         {
@@ -389,6 +399,24 @@ def _quality_check_dataframe(df: pd.DataFrame) -> dict[str, Any]:
             "suggestion": "训练数据少于 30 行，建议补充更多历史数据" if row_count_warning else "无需处理",
             "fixable": False,
             "fixAction": None,
+        },
+        {
+            "key": "date-parse",
+            "checkItem": "日期格式检查",
+            "result": "fail" if date_parse_error_count > 0 else "pass",
+            "problemCount": date_parse_error_count,
+            "suggestion": f"有 {date_parse_error_count} 条记录的日期格式无法解析" if date_parse_error_count else "无需处理",
+            "fixable": False,
+            "fixAction": None,
+        },
+        {
+            "key": "date-sorted",
+            "checkItem": "日期排序检查",
+            "result": "warning" if not date_sorted else "pass",
+            "problemCount": 0 if date_sorted else 1,
+            "suggestion": "数据未按日期升序排列，训练前将自动排序" if not date_sorted else "无需处理",
+            "fixable": True,
+            "fixAction": "sort_dates",
         },
     ]
     missing_count = date_missing_count + purchase_missing_count + lag_missing_count
@@ -576,9 +604,17 @@ def repair_dataset(datasetId: str, input: RepairDatasetInput):
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail="generate_lag 操作需要 purchase_power 字段"
                 )
-            df["purchase_lag_1"] = df["purchase_power"].shift(1)
-            df["purchase_lag_7"] = df["purchase_power"].shift(7)
-            df["purchase_rolling_7"] = df["purchase_power"].rolling(window=7, min_periods=1).mean()
+            # Sort by date first to ensure correct lag/rolling calculation
+            if "date" in df.columns:
+                df["date"] = pd.to_datetime(df["date"], errors="coerce")
+                df = df.sort_values("date").reset_index(drop=True)
+                df["date"] = df["date"].dt.strftime("%Y-%m-%d")
+            
+            purchase = pd.to_numeric(df["purchase_power"], errors="coerce")
+            df["purchase_lag_1"] = purchase.shift(1)
+            df["purchase_lag_7"] = purchase.shift(7)
+            # Shift 1 to exclude current day's data to avoid leakage
+            df["purchase_rolling_7"] = purchase.shift(1).rolling(window=7, min_periods=1).mean()
         elif action == "drop_duplicate_dates":
             if "date" not in df.columns:
                 raise HTTPException(
@@ -1323,6 +1359,9 @@ def run_training_job(input_data: CreateTrainingJobInput) -> dict[str, Any]:
             data_config_path=data_config_path,
             model_config_path=model_config_path,
             model_name=input_data.algorithm,
+            train_data_start=input_data.trainDataStart,
+            train_data_end=input_data.trainDataEnd,
+            save_splits=True,
             extra_metadata={
                 "datasetId": dataset["datasetId"],
                 "datasetFilePath": dataset_file_path,
@@ -1335,6 +1374,11 @@ def run_training_job(input_data: CreateTrainingJobInput) -> dict[str, Any]:
         job["endTime"] = datetime.now().isoformat()
         job["metrics"] = result.get("metrics", {})
         job["modelVersion"] = result.get("model_id", model_version)
+        job["trainSampleCount"] = result.get("train_sample_count", len(X_train) if 'X_train' in locals() else 0)
+        job["testSampleCount"] = result.get("test_sample_count", len(X_test) if 'X_test' in locals() else 0)
+        job["featureDatasetPath"] = result.get("feature_dataset_path", "")
+        job["trainDatasetPath"] = result.get("train_dataset_path", "")
+        job["testDatasetPath"] = result.get("test_dataset_path", "")
         TRAINING_LOGS[job_id].append({"timestamp": datetime.now().isoformat(), "level": "info", "content": "训练完成"})
         
         return {

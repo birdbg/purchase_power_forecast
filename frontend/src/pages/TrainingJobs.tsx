@@ -32,6 +32,9 @@ interface TrainingJob {
   createdBy: string
   remark?: string
   modelVersion?: string
+  datasetId?: string
+  trainSampleCount?: number
+  testSampleCount?: number
 }
 
 const TrainingJobs: React.FC = () => {
@@ -82,7 +85,10 @@ const TrainingJobs: React.FC = () => {
         rmse: job.metrics?.rmse,
         createdBy: 'admin',
         remark: job.remark,
-        modelVersion: job.modelVersion
+        modelVersion: job.modelVersion,
+        datasetId: job.datasetId,
+        trainSampleCount: job.trainSampleCount,
+        testSampleCount: job.testSampleCount
       }))
       
       // 应用过滤
@@ -157,12 +163,20 @@ const TrainingJobs: React.FC = () => {
             content: (
               <div>
                 <p>模型版本：{result.modelVersion}</p>
+                <p>数据集ID：{result.datasetId || params.datasetId}</p>
+                <p>训练时间范围：{params.trainDataStart} ~ {params.trainDataEnd}</p>
+                <p>训练样本数：{result.trainSampleCount || '-'}</p>
+                <p>测试样本数：{result.testSampleCount || '-'}</p>
+                {result.featureDatasetPath && <p>特征数据路径：{result.featureDatasetPath}</p>}
+                {result.trainDatasetPath && <p>训练集路径：{result.trainDatasetPath}</p>}
+                {result.testDatasetPath && <p>测试集路径：{result.testDatasetPath}</p>}
+                <hr />
                 {result.metrics.mape && <p>MAPE：{result.metrics.mape.toFixed(2)}%</p>}
                 {result.metrics.mae && <p>MAE：{result.metrics.mae.toFixed(2)}</p>}
                 {result.metrics.rmse && <p>RMSE：{result.metrics.rmse.toFixed(2)}</p>}
                 {result.metrics.r2 && <p>R²：{result.metrics.r2.toFixed(4)}</p>}
                 <hr />
-                <p>请前往模型管理页面发布该模型为生产版本</p>
+                <p>模型已注册为候选，请进入模型管理页面并点击刷新模型列表查看。</p>
               </div>
             )
           })
@@ -170,7 +184,12 @@ const TrainingJobs: React.FC = () => {
       }
     } catch (error: any) {
       message.destroy()
-      message.error(`训练失败：${error?.response?.data?.detail || error.message}`)
+      const errorDetail = error?.response?.data?.detail || error.message
+      if (errorDetail.includes('No training data found in selected date range')) {
+        message.error('所选日期范围内没有可训练数据，请重新选择日期范围。')
+      } else {
+        message.error(`训练失败：${errorDetail}`)
+      }
       console.error(error)
       await loadJobs()
     } finally {
@@ -307,6 +326,36 @@ const TrainingJobs: React.FC = () => {
       width: 90,
       align: 'right',
       render: (val: number) => val ? val.toFixed(2) : '-'
+    },
+    {
+      title: '模型版本',
+      dataIndex: 'modelVersion',
+      key: 'modelVersion',
+      width: 140,
+      render: (val) => val || '-'
+    },
+    {
+      title: '数据集ID',
+      dataIndex: 'datasetId',
+      key: 'datasetId',
+      width: 120,
+      render: (val) => val || '-'
+    },
+    {
+      title: '训练样本数',
+      dataIndex: 'trainSampleCount',
+      key: 'trainSampleCount',
+      width: 110,
+      align: 'right',
+      render: (val) => val ?? '-'
+    },
+    {
+      title: '测试样本数',
+      dataIndex: 'testSampleCount',
+      key: 'testSampleCount',
+      width: 110,
+      align: 'right',
+      render: (val) => val ?? '-'
     },
     {
       title: '操作',

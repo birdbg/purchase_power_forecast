@@ -41,6 +41,12 @@ export interface CreateTrainingJobResponse {
   }
   status: 'running' | 'success' | 'failed'
   message: string
+  datasetId?: string
+  trainSampleCount?: number
+  testSampleCount?: number
+  featureDatasetPath?: string
+  trainDatasetPath?: string
+  testDatasetPath?: string
 }
 
 // 创建训练任务

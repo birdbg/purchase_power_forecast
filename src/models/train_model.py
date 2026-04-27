@@ -35,6 +35,9 @@ def train_model(
     data_config_path: str = "config/data_config.yaml",
     model_config_path: str = "config/model_config.yaml",
     model_name: str | None = None,
+    train_data_start: str | None = None,
+    train_data_end: str | None = None,
+    save_splits: bool = True,
     extra_metadata: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Train a purchased power forecasting model and register it as candidate.
@@ -82,9 +85,29 @@ def train_model(
     # Convert date column to datetime type
     datetime_col = data_config.get("datetime_col", "date")
     raw_df[datetime_col] = pd.to_datetime(raw_df[datetime_col])
-    datetime_col = data_config.get("datetime_col", "date")
-    train_data_start = raw_df[datetime_col].min().isoformat()
-    train_data_end = raw_df[datetime_col].max().isoformat()
+    
+    # Filter by date range if provided
+    actual_train_start = raw_df[datetime_col].min().isoformat()
+    actual_train_end = raw_df[datetime_col].max().isoformat()
+    
+    if train_data_start:
+        raw_df = raw_df[raw_df[datetime_col] >= pd.to_datetime(train_data_start)]
+    if train_data_end:
+        raw_df = raw_df[raw_df[datetime_col] <= pd.to_datetime(train_data_end)]
+    
+    # Check if filtered data is empty
+    if len(raw_df) == 0:
+        raise ValueError("No training data found in selected date range")
+    
+    # Warn if data is too small
+    if len(raw_df) < 30:
+        import warnings
+        warnings.warn(f"Training dataset only has {len(raw_df)} rows, which may lead to poor model performance")
+    
+    # Update to actual filtered date range
+    actual_train_start = raw_df[datetime_col].min().isoformat()
+    actual_train_end = raw_df[datetime_col].max().isoformat()
+    print(f"  过滤后数据: {raw_df.shape[0]} 行, 日期范围: {actual_train_start} 至 {actual_train_end}")
 
     # Clean data
     print(f"\n[步骤 2/6] 清洗数据...")
@@ -107,9 +130,36 @@ def train_model(
     y = train_df[target_col].copy()
 
     print(f"\n[步骤 4/6] 划分训练集/测试集...")
-    X_train, X_test, y_train, y_test = _split_by_time(X, y, model_config)
+    X_train, X_test, y_train, y_test, split_index = _split_by_time(X, y, model_config)
     print(f"  训练集: {len(X_train)} 样本")
     print(f"  测试集: {len(X_test)} 样本")
+    
+    # Save split datasets if enabled
+    train_df_split = None
+    test_df_split = None
+    if save_splits:
+        from pathlib import Path
+        datasets_dir = Path("outputs/datasets")
+        datasets_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Split the full train_df (includes date, target, features)
+        train_df_split = train_df.iloc[:split_index]
+        test_df_split = train_df.iloc[split_index:]
+        
+        # Save full features dataset
+        feature_path = datasets_dir / f"{model_id}_features.csv"
+        train_df.to_csv(feature_path, index=False, date_format="%Y-%m-%d")
+        print(f"  特征数据集已保存: {feature_path}")
+        
+        # Save train split
+        train_path = datasets_dir / f"{model_id}_train.csv"
+        train_df_split.to_csv(train_path, index=False, date_format="%Y-%m-%d")
+        print(f"  训练集已保存: {train_path}")
+        
+        # Save test split
+        test_path = datasets_dir / f"{model_id}_test.csv"
+        test_df_split.to_csv(test_path, index=False, date_format="%Y-%m-%d")
+        print(f"  测试集已保存: {test_path}")
 
     # Train model
     print(f"\n[步骤 5/6] 训练模型...")
@@ -170,12 +220,24 @@ def train_model(
         "target": target_col,
         "features": feature_cols,
         "metrics": metrics,
-        "train_data_start": train_data_start,
-        "train_data_end": train_data_end,
+        "train_data_start": actual_train_start,
+        "train_data_end": actual_train_end,
         "created_at": created_at,
         "data_path": str(data_path),
         "status": model_config.get("registry", {}).get("candidate_status", "candidate"),
+        "split_ratio": model_config.get("train_test_split_ratio", 0.2),
+        "train_sample_count": len(train_df_split) if train_df_split is not None else len(X_train),
+        "test_sample_count": len(test_df_split) if test_df_split is not None else len(X_test),
     }
+    
+    # Add split file paths if saved
+    if save_splits:
+        datasets_dir = Path("outputs/datasets")
+        metadata.update({
+            "feature_dataset_path": str(datasets_dir / f"{model_id}_features.csv"),
+            "train_dataset_path": str(datasets_dir / f"{model_id}_train.csv"),
+            "test_dataset_path": str(datasets_dir / f"{model_id}_test.csv"),
+        })
     if extra_metadata:
         metadata.update(extra_metadata)
 
@@ -217,7 +279,7 @@ def _split_by_time(
     X: Any,
     y: Any,
     model_config: dict[str, Any],
-) -> tuple[Any, Any, Any, Any]:
+) -> tuple[Any, Any, Any, Any, int]:
     """Split data by time order (no shuffle).
 
     Args:
@@ -226,7 +288,7 @@ def _split_by_time(
         model_config: Model configuration.
 
     Returns:
-        Tuple of (X_train, X_test, y_train, y_test).
+        Tuple of (X_train, X_test, y_train, y_test, split_index).
     """
     test_ratio = model_config.get("train_test_split_ratio", 0.2)
 
@@ -241,7 +303,7 @@ def _split_by_time(
     y_train = y.iloc[:split_index]
     y_test = y.iloc[split_index:]
 
-    return X_train, X_test, y_train, y_test
+    return X_train, X_test, y_train, y_test, split_index
 
 
 def _create_model(model_config: dict[str, Any], model_name: str | None = None) -> Any:
@@ -346,6 +408,9 @@ def main() -> None:
         data_config_path=args.data_config,
         model_config_path=args.model_config,
         model_name=args.model,
+        train_data_start=None,
+        train_data_end=None,
+        save_splits=True,
     )
 
     print("\n[最终结果]")

@@ -5,7 +5,7 @@ import {
 } from 'antd'
 import { getModelList, promoteModel, rollbackModel } from '@/api/modelApi'
 import {
-  EyeOutlined, RocketOutlined, RollbackOutlined,
+  EyeOutlined, RocketOutlined, RollbackOutlined, ReloadOutlined,
   CheckCircleOutlined, ClockCircleOutlined, WarningOutlined,
   CloseCircleOutlined, InboxOutlined
 } from '@ant-design/icons'
@@ -35,6 +35,13 @@ interface ModelVersion {
   datasetId?: string
   datasetFilePath?: string
   rowCount?: number
+  featureDatasetPath?: string
+  trainDatasetPath?: string
+  testDatasetPath?: string
+  trainSampleCount?: number
+  testSampleCount?: number
+  trainDataStart?: string
+  trainDataEnd?: string
 }
 
 const ModelManagement: React.FC = () => {
@@ -73,7 +80,14 @@ const ModelManagement: React.FC = () => {
         remark: model.remark,
         datasetId: model.datasetId,
         datasetFilePath: model.datasetFilePath,
-        rowCount: model.rowCount
+        rowCount: model.rowCount,
+        featureDatasetPath: model.featureDatasetPath,
+        trainDatasetPath: model.trainDatasetPath,
+        testDatasetPath: model.testDatasetPath,
+        trainSampleCount: model.trainSampleCount,
+        testSampleCount: model.testSampleCount,
+        trainDataStart: model.trainDataStart,
+        trainDataEnd: model.trainDataEnd
       }))
       setModels(formattedModels)
     } catch (error) {
@@ -330,7 +344,20 @@ const ModelManagement: React.FC = () => {
       )}
 
       {/* 模型版本列表 */}
-      <Card bordered={false} title="模型版本列表">
+      <Card
+        bordered={false}
+        title="模型版本列表"
+        extra={
+          <Button
+            type="primary"
+            icon={<ReloadOutlined />}
+            onClick={loadModels}
+            loading={loading}
+          >
+            刷新模型列表
+          </Button>
+        }
+      >
         <Table
           columns={columns}
           dataSource={models}
@@ -404,6 +431,21 @@ const ModelManagement: React.FC = () => {
               </Descriptions.Item>
               <Descriptions.Item label="数据集路径" span={2}>
                 {currentModel.datasetFilePath || '-'}
+              </Descriptions.Item>
+              <Descriptions.Item label="训练样本数" span={1}>
+                {currentModel.trainSampleCount ?? '-'}
+              </Descriptions.Item>
+              <Descriptions.Item label="测试样本数" span={1}>
+                {currentModel.testSampleCount ?? '-'}
+              </Descriptions.Item>
+              <Descriptions.Item label="特征数据路径" span={2}>
+                {currentModel.featureDatasetPath || '-'}
+              </Descriptions.Item>
+              <Descriptions.Item label="训练集路径" span={2}>
+                {currentModel.trainDatasetPath || '-'}
+              </Descriptions.Item>
+              <Descriptions.Item label="测试集路径" span={2}>
+                {currentModel.testDatasetPath || '-'}
               </Descriptions.Item>
               <Descriptions.Item label="MAE" span={1}>
                 {currentModel.mae.toFixed(2)}

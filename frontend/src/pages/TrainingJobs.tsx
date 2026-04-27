@@ -1,8 +1,9 @@
 import React, { useState, useEffect } from 'react'
 import {
   Table, Button, Space, Tag, Card, Modal, Drawer, Form, Select, DatePicker,
-  Input, Switch, message, Typography, Row, Col
+  Input, Switch, message, Typography, Row, Col, Alert
 } from 'antd'
+import { getTrainingJobs, createTrainingJob, getTrainingLog } from '@/api/trainApi'
 import {
   PlusOutlined, ReloadOutlined, FileTextOutlined, BarChartOutlined,
   DeploymentUnitOutlined, SyncOutlined, CheckCircleOutlined,
@@ -111,6 +112,8 @@ const mockLogs = `[2026-04-26 10:30:00] 开始加载训练数据...
 const TrainingJobs: React.FC = () => {
   const [jobs, setJobs] = useState<TrainingJob[]>(mockJobs)
   const [loading, setLoading] = useState(false)
+  const [submitLoading, setSubmitLoading] = useState(false)
+  const [logs, setLogs] = useState<string>('')
   const [algorithmFilter, setAlgorithmFilter] = useState<string>()
   const [statusFilter, setStatusFilter] = useState<string>()
   const [modalVisible, setModalVisible] = useState(false)
@@ -119,11 +122,30 @@ const TrainingJobs: React.FC = () => {
   const [form] = Form.useForm()
 
   // 加载任务列表
-  const loadJobs = () => {
+  const loadJobs = async () => {
     setLoading(true)
-    // 模拟请求接口
-    setTimeout(() => {
-      let filtered = [...mockJobs]
+    try {
+      const data = await getTrainingJobs()
+      // 转换字段适配前端类型
+      const formattedJobs = data.map((job: any) => ({
+        id: job.jobId,
+        modelName: job.modelName,
+        algorithm: job.algorithm === 'random_forest' ? 'RandomForest' :
+                   job.algorithm === 'xgboost' ? 'XGBoost' : 'LightGBM',
+        dataRange: job.trainDataRange ? `${job.trainDataRange[0]} ~ ${job.trainDataRange[1]}` : '-',
+        startTime: job.startTime,
+        endTime: job.endTime,
+        status: job.status,
+        mape: job.metrics?.mape,
+        mae: job.metrics?.mae,
+        rmse: job.metrics?.rmse,
+        createdBy: 'admin',
+        remark: job.remark,
+        modelVersion: job.modelVersion
+      }))
+      
+      // 应用过滤
+      let filtered = [...formattedJobs]
       if (algorithmFilter) {
         filtered = filtered.filter(job => job.algorithm === algorithmFilter)
       }
@@ -131,9 +153,13 @@ const TrainingJobs: React.FC = () => {
         filtered = filtered.filter(job => job.status === statusFilter)
       }
       setJobs(filtered)
-      setLoading(false)
       message.success('列表已刷新')
-    }, 800)
+    } catch (error) {
+      message.error('加载训练任务列表失败')
+      console.error(error)
+    } finally {
+      setLoading(false)
+    }
   }
 
   useEffect(() => {
@@ -141,28 +167,72 @@ const TrainingJobs: React.FC = () => {
   }, [algorithmFilter, statusFilter])
 
   // 新建训练任务
-  const handleCreateJob = (values: any) => {
-    console.log('新建训练任务参数:', values)
-    // 模拟创建
-    const newJob: TrainingJob = {
-      id: `JOB${dayjs().format('YYYYMMDDHHmmss')}`,
-      modelName: '外购电预测模型',
-      algorithm: values.algorithm,
-      dataRange: `${values.dataRange[0].format('YYYY-MM-DD')} ~ ${values.dataRange[1].format('YYYY-MM-DD')}`,
-      startTime: dayjs().format('YYYY-MM-DD HH:mm:ss'),
-      status: 'running',
-      createdBy: 'admin',
-      remark: values.remark
+  const handleCreateJob = async (values: any) => {
+    setSubmitLoading(true)
+    try {
+      // 转换算法名到后端格式
+      const algorithmMap: Record<string, string> = {
+        'RandomForest': 'random_forest',
+        'XGBoost': 'xgboost',
+        'LightGBM': 'lightgbm'
+      }
+      
+      const params = {
+        modelName: 'purchase_power',
+        algorithm: algorithmMap[values.algorithm],
+        trainDataStart: values.dataRange[0].format('YYYY-MM-DD'),
+        trainDataEnd: values.dataRange[1].format('YYYY-MM-DD'),
+        remark: values.remark
+      }
+      
+      const result = await createTrainingJob(params)
+      
+      if (result.success) {
+        message.success(`训练任务提交成功，模型版本：${result.modelVersion}\nMAPE: ${result.metrics.mape.toFixed(2)}%`)
+        setModalVisible(false)
+        form.resetFields()
+        // 刷新列表
+        await loadJobs()
+        
+        // 提示用户去模型管理页面发布
+        Modal.success({
+          title: '训练完成',
+          content: (
+            <div>
+              <p>模型版本：{result.modelVersion}</p>
+              <p>MAPE：{result.metrics.mape.toFixed(2)}%</p>
+              <p>MAE：{result.metrics.mae.toFixed(2)}</p>
+              <p>RMSE：{result.metrics.rmse.toFixed(2)}</p>
+              <p>R²：{result.metrics.r2.toFixed(4)}</p>
+              <hr />
+              <p>请前往模型管理页面发布该模型为生产版本</p>
+            </div>
+          )
+        })
+      }
+    } catch (error: any) {
+      message.error(`训练失败：${error?.response?.data?.detail || error.message}`)
+      console.error(error)
+    } finally {
+      setSubmitLoading(false)
     }
-    setJobs([newJob, ...jobs])
-    setModalVisible(false)
-    form.resetFields()
-    message.success('训练任务已提交，开始执行')
   }
 
   // 查看日志
-  const handleViewLog = (job: TrainingJob) => {
+  const handleViewLog = async (job: TrainingJob) => {
     setCurrentJob(job)
+    try {
+      const logsData = await getTrainingLog(job.id)
+      // 格式化日志
+      const formattedLogs = logsData.map((log: any) =>
+        `[${log.timestamp}] [${log.level}] ${log.content}`
+      ).join('\n')
+      setLogs(formattedLogs || '暂无日志')
+    } catch (error) {
+      message.error('加载日志失败')
+      setLogs('加载日志失败')
+      console.error(error)
+    }
     setDrawerVisible(true)
   }
 

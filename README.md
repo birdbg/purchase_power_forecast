@@ -160,6 +160,35 @@ date,purchase_power,prediction_value,model_name,model_version,algorithm,predict_
 2025-01-26,,879.07,purchase_power,v20260426_001,random_forest,2026-04-26T19:07:45.178502
 ```
 
+### 4.5 自动调参
+
+使用 Optuna 实现超参数自动搜索，支持 xgboost / lightgbm / random_forest 三种模型。
+
+#### 基础调参命令：
+```bash
+# XGBoost调参，30次迭代
+python -m src.models.tune_model --model xgboost --n-trials 30
+
+# LightGBM调参
+python -m src.models.tune_model --model lightgbm --n-trials 30
+
+# RandomForest调参
+python -m src.models.tune_model --model random_forest --n-trials 30
+```
+
+#### 调参并注册最终模型：
+添加 `--train-final` 参数，会使用找到的最佳参数重新训练全量模型并注册为 candidate 状态：
+```bash
+python -m src.models.tune_model --model xgboost --n-trials 30 --train-final
+```
+
+#### 调参说明：
+- 调参过程会自动输出最佳参数、最佳MAPE、以及所有指标结果
+- 调参明细会保存到 `outputs/reports/tuning_trials_<model>_<timestamp>.csv`
+- 最佳结果会保存到 `outputs/reports/tuning_result_<model>_<timestamp>.json`
+- 仅调参不会生成可用模型，需要加 `--train-final` 才会注册 candidate 模型
+- candidate 模型仍需要手动 promote 为 production 后才能用于预测
+
 ### 5. 启动 FastAPI 服务
 
 ```bash

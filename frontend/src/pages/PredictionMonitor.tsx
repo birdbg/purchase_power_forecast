@@ -1,14 +1,15 @@
-import React, { useState } from 'react'
+import React, { useState, useEffect } from 'react'
 import {
   Card, Row, Col, DatePicker, Select, Table, Button, Statistic,
-  Typography, Space, Tag, message
+  Typography, Space, Tag, message, Modal, Form, InputNumber, Switch
 } from 'antd'
+import { DownloadOutlined, CheckCircleOutlined, WarningOutlined, CloseCircleOutlined, PlayCircleOutlined } from '@ant-design/icons'
+import { getPredictionResults, runPrediction, exportPredictionResults, singlePredict } from '@/api/predictApi'
 import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend,
   BarChart, Bar, ResponsiveContainer, Cell
 } from 'recharts'
 import type { TableProps } from 'antd'
-import { DownloadOutlined, CheckCircleOutlined, WarningOutlined, CloseCircleOutlined } from '@ant-design/icons'
 import dayjs from 'dayjs'
 
 const { RangePicker } = DatePicker
@@ -126,6 +127,12 @@ const PredictionMonitor: React.FC = () => {
   ])
   const [modelVersion, setModelVersion] = useState<string>('all')
   const [errorStatus, setErrorStatus] = useState<string>('all')
+  const [loading, setLoading] = useState(false)
+  const [predictionData, setPredictionData] = useState<PredictionRecord[]>(tableData)
+  const [batchPredictLoading, setBatchPredictLoading] = useState(false)
+  const [singlePredictModalVisible, setSinglePredictModalVisible] = useState(false)
+  const [singlePredictResult, setSinglePredictResult] = useState<any>(null)
+  const [form] = Form.useForm()
 
   // 表格列配置
   const columns: TableProps<PredictionRecord>['columns'] = [

@@ -23,7 +23,7 @@ export const getTrainingJobs = async (): Promise<TrainJob[]> => {
       dataSize: Math.floor(Math.random() * 1000) + 500
     })))
   }
-  return http.get<TrainJob[]>('/api/train/jobs')
+  return http.get<TrainJob[]>('/api/training/jobs')
 }
 
 // 创建训练任务
@@ -36,7 +36,7 @@ export const createTrainingJob = async (payload: CreateTrainJobPayload): Promise
       message: '训练任务创建成功，任务ID：' + jobId
     })
   }
-  return http.post<{ success: boolean; jobId: string; message: string }>('/api/train/create', payload)
+  return http.post<{ success: boolean; jobId: string; message: string }>('/api/training/run', payload)
 }
 
 // 获取训练日志
@@ -50,7 +50,7 @@ export const getTrainingLog = async (jobId: string): Promise<TrainLog[]> => {
       content: log.substring(22)
     })) || [])
   }
-  return http.get<TrainLog[]>(`/api/train/log/${jobId}`)
+  return http.get<TrainLog[]>(`/api/training/jobs/${jobId}/log`)
 }
 
 // 获取训练结果
@@ -72,5 +72,5 @@ export const getTrainingResult = async (jobId: string): Promise<TrainResult | nu
       trainTime: Math.floor(Math.random() * 600) + 300
     })
   }
-  return http.get<TrainResult>(`/api/train/result/${jobId}`)
+  return http.get<TrainResult>(`/api/training/jobs/${jobId}`)
 }

@@ -25,7 +25,7 @@ export const getModelList = async (): Promise<ModelVersion[]> => {
       remark: m.remark
     })))
   }
-  return http.get<ModelVersion[]>('/api/model/list')
+  return http.get<ModelVersion[]>('/api/models')
 }
 
 // 获取当前生产模型
@@ -52,7 +52,7 @@ export const getCurrentModel = async (): Promise<ModelVersion> => {
       remark: productionModel.remark
     })
   }
-  return http.get<ModelVersion>('/api/model/current')
+  return http.get<ModelVersion>('/api/models/current')
 }
 
 // 发布模型为生产版本
@@ -63,7 +63,7 @@ export const promoteModel = async (version: string): Promise<{ success: boolean;
       message: `模型${version}发布成功`
     })
   }
-  return http.post(`/api/model/promote/${version}`)
+  return http.post<{ success: boolean; message: string }>(`/api/models/${version}/promote`)
 }
 
 // 回滚到指定版本
@@ -74,7 +74,7 @@ export const rollbackModel = async (version: string): Promise<{ success: boolean
       message: `已回滚到模型版本${version}`
     })
   }
-  return http.post(`/api/model/rollback/${version}`)
+  return http.post<{ success: boolean; message: string }>(`/api/models/${version}/rollback`)
 }
 
 // 获取模型详情
@@ -101,5 +101,5 @@ export const getModelDetail = async (version: string): Promise<ModelVersion> => 
       remark: model.remark
     })
   }
-  return http.get<ModelVersion>(`/api/model/detail/${version}`)
+  return http.get<ModelVersion>(`/api/models/${version}`)
 }

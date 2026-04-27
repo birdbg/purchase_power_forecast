@@ -10,3 +10,4 @@ uvicorn[standard]
 openpyxl
 matplotlib
 pytest
+optuna

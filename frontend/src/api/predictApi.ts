@@ -26,7 +26,7 @@ export const getPredictionResults = async (params?: PredictParams): Promise<Pred
       records: records.slice(0, params?.pageSize || 20)
     })
   }
-  return http.get<PredictResult>('/api/predict/results', { params })
+  return http.get<PredictResult>('/api/predictions', { params })
 }
 
 // 执行预测任务
@@ -39,7 +39,19 @@ export const runPrediction = async (payload: RunPredictPayload): Promise<{ succe
       message: '预测任务提交成功，预计1分钟后完成'
     })
   }
-  return http.post<{ success: boolean; taskId: string; message: string }>('/api/predict/run', payload)
+  return http.post<{ success: boolean; taskId: string; message: string }>('/api/predictions/run', payload)
+}
+
+// 单条预测
+export const singlePredict = async (payload: any): Promise<{ success: boolean; prediction: number; message: string }> => {
+  if (USE_MOCK) {
+    return Promise.resolve({
+      success: true,
+      prediction: Math.random() * 1000 + 5000,
+      message: '预测成功'
+    })
+  }
+  return http.post<{ success: boolean; prediction: number; message: string }>('/api/predict', payload)
 }
 
 // 导出预测结果
@@ -49,5 +61,5 @@ export const exportPredictionResults = async (params?: PredictParams): Promise<{
       downloadUrl: '/download/prediction_result.xlsx'
     })
   }
-  return http.get<{ downloadUrl: string }>('/api/predict/export', { params, responseType: 'blob' })
+  return http.get<{ downloadUrl: string }>('/api/predictions/export', { params, responseType: 'blob' })
 }

@@ -1,8 +1,8 @@
 import axios from 'axios'
 import { message } from 'antd'
 
-// API开关：是否使用Mock数据，切换为false时调用真实后端接口
-export const USE_MOCK = import.meta.env.VITE_USE_MOCK === 'false' || false
+// API开关：是否使用Mock数据，true时使用mock，false或未设置时调用真实后端
+export const USE_MOCK = import.meta.env.VITE_USE_MOCK === 'true'
 
 // 创建axios实例
 const http = axios.create({

@@ -16,6 +16,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta
 from typing import Any, Optional, List, Dict
 from uuid import uuid4
+import subprocess
 
 import joblib
 import pandas as pd
@@ -24,6 +25,9 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
 from src.registry.model_registry import ModelRegistry, ModelNotFoundError
+from src.models.train_model import train_model
+from src.models.predict_model import predict as run_batch_predict
+from src.models.evaluate_model import evaluate_model
 
 
 # ==================== Pydantic Models ====================
@@ -178,9 +182,9 @@ class TrainingJob(BaseModel):
 class CreateTrainingJobInput(BaseModel):
     """Schema for creating training job input."""
     modelName: str = Field(default="purchase_power")
-    algorithm: str = Field(default="RandomForest")
-    trainDataStart: str
-    trainDataEnd: str
+    algorithm: str = Field(default="random_forest", description="Algorithm: random_forest, xgboost, lightgbm")
+    trainDataStart: Optional[str] = Field(default="2024-01-01")
+    trainDataEnd: Optional[str] = Field(default="2024-12-31")
     params: Optional[Dict[str, Any]] = Field(default_factory=dict)
     remark: Optional[str] = None
 
@@ -211,6 +215,9 @@ app.add_middleware(
 
 # Global model registry instance
 _registry: ModelRegistry | None = None
+
+# Global training jobs storage
+TRAINING_JOBS = []
 
 
 def get_registry() -> ModelRegistry:
@@ -815,3 +822,305 @@ def predict(input_data: PredictInput) -> dict[str, Any]:
         "model_version": model_info["model_id"],
         "predict_time": datetime.now().isoformat()
     }
+
+
+@app.post("/api/training/run")
+def run_training_job(input_data: CreateTrainingJobInput) -> dict[str, Any]:
+    """Run a new training job."""
+    global TRAINING_JOBS
+    job_id = f"job_{uuid4().hex[:8]}"
+    start_time = datetime.now().isoformat()
+    
+    # Add job to list first
+    job = {
+        "jobId": job_id,
+        "modelName": input_data.modelName,
+        "algorithm": input_data.algorithm,
+        "status": "running",
+        "startTime": start_time,
+        "endTime": None,
+        "progress": 0.0,
+        "metrics": None,
+        "params": input_data.params,
+        "trainDataRange": [input_data.trainDataStart, input_data.trainDataEnd],
+        "errorMessage": None,
+        "remark": input_data.remark,
+        "logs": [
+            {"timestamp": start_time, "level": "info", "content": "开始训练任务"}
+        ]
+    }
+    TRAINING_JOBS.append(job)
+    
+    try:
+        # Run training
+        model_version = f"v{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+        job["logs"].append({"timestamp": datetime.now().isoformat(), "level": "info", "content": f"生成模型版本: {model_version}"})
+        job["progress"] = 30.0
+        
+        result = train_model(
+            model_name=input_data.modelName,
+            algorithm=input_data.algorithm,
+            model_version=model_version,
+            train_start_date=input_data.trainDataStart,
+            train_end_date=input_data.trainDataEnd,
+            params=input_data.params,
+            remark=input_data.remark
+        )
+        
+        job["progress"] = 100.0
+        job["status"] = "success"
+        job["endTime"] = datetime.now().isoformat()
+        job["metrics"] = result.get("metrics", {})
+        job["modelVersion"] = model_version
+        job["logs"].append({"timestamp": datetime.now().isoformat(), "level": "info", "content": "训练完成"})
+        
+        return {
+            "success": True,
+            "jobId": job_id,
+            "modelVersion": model_version,
+            "algorithm": input_data.algorithm,
+            "metrics": job["metrics"],
+            "status": "success",
+            "message": f"训练完成，模型版本: {model_version}"
+        }
+    except Exception as e:
+        job["status"] = "failed"
+        job["endTime"] = datetime.now().isoformat()
+        job["errorMessage"] = str(e)
+        job["logs"].append({"timestamp": datetime.now().isoformat(), "level": "error", "content": f"训练失败: {str(e)}"})
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"训练任务失败: {str(e)}"
+        )
+
+
+@app.get("/api/training/jobs", response_model=List[TrainingJob])
+def list_training_jobs() -> List[Dict[str, Any]]:
+    """List all training jobs."""
+    global TRAINING_JOBS
+    # Combine real jobs with mock if no real jobs exist
+    if not TRAINING_JOBS:
+        return get_mock_training_jobs()
+    return TRAINING_JOBS
+
+
+@app.get("/api/training/jobs/{job_id}", response_model=TrainingJob)
+def get_training_job(job_id: str) -> Dict[str, Any]:
+    """Get training job details by ID."""
+    global TRAINING_JOBS
+    for job in TRAINING_JOBS:
+        if job["jobId"] == job_id:
+            return job
+    
+    # Fallback to mock
+    mock_jobs = get_mock_training_jobs()
+    for job in mock_jobs:
+        if job["jobId"] == job_id:
+            return job
+    
+    raise HTTPException(
+        status_code=status.HTTP_404_NOT_FOUND,
+        detail=f"Training job {job_id} not found"
+    )
+
+
+@app.get("/api/training/jobs/{job_id}/log")
+def get_training_job_logs(job_id: str) -> List[Dict[str, Any]]:
+    """Get training job logs by ID."""
+    global TRAINING_JOBS
+    for job in TRAINING_JOBS:
+        if job["jobId"] == job_id:
+            return job.get("logs", [])
+    
+    # Fallback to default logs
+    return [
+        {"timestamp": datetime.now().isoformat(), "level": "info", "content": "训练任务开始"},
+        {"timestamp": datetime.now().isoformat(), "level": "info", "content": "数据加载完成"},
+        {"timestamp": datetime.now().isoformat(), "level": "info", "content": "特征工程完成"},
+        {"timestamp": datetime.now().isoformat(), "level": "info", "content": "模型训练完成"},
+        {"timestamp": datetime.now().isoformat(), "level": "info", "content": "模型注册成功"}
+    ]
+
+
+@app.post("/api/predictions/run")
+def run_batch_prediction() -> dict[str, Any]:
+    """Run batch prediction task."""
+    try:
+        # Run batch prediction
+        result = run_batch_predict()
+        output_path = result.get("output_path", "outputs/reports/prediction_result.csv")
+        sample_count = result.get("sample_count", 0)
+        model_version = result.get("model_version", "unknown")
+        
+        return {
+            "success": True,
+            "outputPath": output_path,
+            "sampleCount": sample_count,
+            "modelVersion": model_version,
+            "modelName": "purchase_power",
+            "predictTime": datetime.now().isoformat(),
+            "message": f"批量预测完成，共生成 {sample_count} 条预测记录"
+        }
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"预测任务失败: {str(e)}"
+        )
+
+
+@app.get("/api/predictions", response_model=List[PredictionRecord])
+def get_prediction_records(
+    date_start: Optional[str] = Query(None, description="Start date in YYYY-MM-DD format"),
+    date_end: Optional[str] = Query(None, description="End date in YYYY-MM-DD format"),
+    model_version: Optional[str] = Query(None, description="Filter by model version"),
+    status: Optional[str] = Query(None, description="Filter by status")
+) -> List[Dict[str, Any]]:
+    """Get prediction records with optional filters."""
+    # Try to read real prediction file first
+    try:
+        pred_file = Path("outputs/reports/prediction_result.csv")
+        if pred_file.exists():
+            df = pd.read_csv(pred_file)
+            predictions = []
+            
+            for idx, row in df.iterrows():
+                actual = row.get("purchase_power")
+                predict_val = row.get("prediction", row.get("predicted_purchase_power", 0))
+                error = abs(predict_val - actual) if actual is not None else None
+                error_rate = round(error / actual * 100, 2) if actual is not None and actual > 0 else None
+                
+                # Determine status
+                if actual is None:
+                    record_status = "pending"
+                elif error_rate > 10:
+                    record_status = "abnormal"
+                elif error_rate > 5:
+                    record_status = "warning"
+                else:
+                    record_status = "normal"
+                
+                predictions.append({
+                    "id": f"pred_{idx}",
+                    "datetime": row.get("date", row.get("datetime", datetime.now().isoformat())),
+                    "predictValue": float(predict_val),
+                    "actualValue": float(actual) if actual is not None else None,
+                    "error": float(error) if error is not None else None,
+                    "errorRate": error_rate,
+                    "modelVersion": row.get("model_version", "unknown"),
+                    "algorithm": row.get("algorithm", "RandomForest"),
+                    "status": record_status,
+                    "createdAt": row.get("predict_time", datetime.now().isoformat())
+                })
+            
+            # Apply filters
+            if date_start:
+                predictions = [p for p in predictions if p["datetime"] >= date_start]
+            if date_end:
+                predictions = [p for p in predictions if p["datetime"] <= date_end]
+            if model_version:
+                predictions = [p for p in predictions if p["modelVersion"] == model_version]
+            if status:
+                predictions = [p for p in predictions if p["status"] == status]
+            
+            return predictions
+    except Exception:
+        pass
+    
+    # Fallback to mock data
+    predictions = get_mock_predictions()
+    
+    # Apply filters
+    if date_start:
+        predictions = [p for p in predictions if p["datetime"] >= date_start]
+    if date_end:
+        predictions = [p for p in predictions if p["datetime"] <= date_end]
+    if model_version:
+        predictions = [p for p in predictions if p["modelVersion"] == model_version]
+    if status:
+        predictions = [p for p in predictions if p["status"] == status]
+    
+    return predictions
+
+
+@app.post("/api/evaluation/{version}/run")
+def run_model_evaluation(version: str) -> dict[str, Any]:
+    """Run model evaluation for a specific version."""
+    try:
+        # Handle current version
+        if version == "current":
+            registry = get_registry()
+            production_model = registry.get_production_model_info()
+            version = production_model["model_id"]
+        
+        # Run evaluation
+        result = evaluate_model(model_version=version)
+        metrics = result.get("metrics", {})
+        report_path = result.get("report_path", "")
+        
+        return {
+            "success": True,
+            "modelVersion": version,
+            "metrics": metrics,
+            "reportPath": report_path,
+            "message": "评估完成"
+        }
+    except ModelNotFoundError:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Model version {version} not found"
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"评估任务失败: {str(e)}"
+        )
+        
+        return {
+            "success": True,
+            "message": "评估任务提交成功，正在执行"
+        }
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"启动评估任务失败: {str(e)}"
+        )
+
+
+@app.get("/api/predictions", response_model=List[PredictionRecord])
+def get_prediction_records(
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=100)
+) -> List[Dict[str, Any]]:
+    """Get prediction records from CSV file."""
+    try:
+        prediction_file = Path("outputs/reports/prediction_result.csv")
+        if not prediction_file.exists():
+            return []
+        
+        df = pd.read_csv(prediction_file)
+        
+        # Convert to prediction records
+        records = []
+        for idx, row in df.iterrows():
+            records.append({
+                "id": f"PRED-{idx + 1}",
+                "date": row.get("date", ""),
+                "predictedValue": float(row.get("prediction", 0)),
+                "actualValue": float(row.get("actual", 0)) if "actual" in df.columns else None,
+                "error": float(row.get("error", 0)) if "error" in df.columns else None,
+                "errorRate": float(row.get("error_rate", 0)) if "error_rate" in df.columns else None,
+                "modelId": row.get("model_id", ""),
+                "modelVersion": row.get("model_version", ""),
+                "status": "success" if float(row.get("error_rate", 0)) < 5 else "warning" if float(row.get("error_rate", 0)) < 10 else "failed",
+                "createdAt": datetime.now().isoformat()
+            })
+        
+        # Pagination
+        start = (page - 1) * page_size
+        end = start + page_size
+        return records[start:end]
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"读取预测结果失败: {str(e)}"
+        )

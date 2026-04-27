@@ -1,8 +1,9 @@
-import React, { useState } from 'react'
+import React, { useState, useEffect } from 'react'
 import {
   Card, Row, Col, Statistic, Table, Tag, Button, Space, Modal,
   Descriptions, Popconfirm, message, Typography, Badge
 } from 'antd'
+import { getModelList, promoteModel, rollbackModel } from '@/api/modelApi'
 import {
   EyeOutlined, RocketOutlined, RollbackOutlined, InboxOutlined,
   CheckCircleOutlined, ClockCircleOutlined, WarningOutlined,
@@ -124,11 +125,50 @@ const mockModels: ModelVersion[] = [
 
 const ModelManagement: React.FC = () => {
   const [models, setModels] = useState<ModelVersion[]>(mockModels)
+  const [loading, setLoading] = useState(false)
   const [detailVisible, setDetailVisible] = useState(false)
   const [currentModel, setCurrentModel] = useState<ModelVersion | null>(null)
 
   // 获取当前production模型
   const productionModel = models.find(m => m.status === 'production')
+
+  // 加载模型列表
+  const loadModels = async () => {
+    setLoading(true)
+    try {
+      const data = await getModelList()
+      // 转换字段适配前端类型
+      const formattedModels = data.map((model: any) => ({
+        id: model.id,
+        version: model.version,
+        modelName: '外购电预测模型',
+        algorithm: model.algorithm === 'random_forest' ? 'RandomForest' :
+                   model.algorithm === 'xgboost' ? 'XGBoost' : 'LightGBM',
+        status: model.status,
+        dataRange: `${model.trainDataStart} ~ ${model.trainDataEnd}`,
+        mae: model.mae,
+        mape: model.mape,
+        rmse: model.rmse,
+        r2: model.r2,
+        createdAt: model.createdAt,
+        publishedAt: model.publishedAt,
+        createdBy: 'admin',
+        features: model.features,
+        params: model.params,
+        remark: model.remark
+      }))
+      setModels(formattedModels)
+    } catch (error) {
+      message.error('加载模型列表失败')
+      console.error(error)
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  useEffect(() => {
+    loadModels()
+  }, [])
 
   // 状态配置
   const statusConfig: Record<string, { color: string; icon: React.ReactNode; text: string }> = {
@@ -140,26 +180,29 @@ const ModelManagement: React.FC = () => {
   }
 
   // 发布为生产模型
-  const handlePublish = (model: ModelVersion) => {
-    // 把原来的production改成archived
-    const updated = models.map(m => {
-      if (m.status === 'production') {
-        return { ...m, status: 'archived' as const }
-      }
-      if (m.id === model.id) {
-        return { ...m, status: 'production' as const, publishedAt: new Date().toLocaleString('zh-CN') }
-      }
-      return m
-    })
-    setModels(updated)
-    message.success(`模型 ${model.version} 已成功发布为生产版本`)
+  const handlePublish = async (model: ModelVersion) => {
+    try {
+      await promoteModel(model.version)
+      message.success(`模型 ${model.version} 已成功发布为生产版本`)
+      // 刷新列表
+      await loadModels()
+    } catch (error: any) {
+      message.error(`发布失败：${error?.response?.data?.detail || error.message}`)
+      console.error(error)
+    }
   }
 
   // 回滚到该版本
-  const handleRollback = (model: ModelVersion) => {
-    // 和发布逻辑一样，把当前production归档，选中的变成production
-    handlePublish(model)
-    message.success(`已成功回滚到版本 ${model.version}`)
+  const handleRollback = async (model: ModelVersion) => {
+    try {
+      await rollbackModel(model.version)
+      message.success(`已成功回滚到版本 ${model.version}`)
+      // 刷新列表
+      await loadModels()
+    } catch (error: any) {
+      message.error(`回滚失败：${error?.response?.data?.detail || error.message}`)
+      console.error(error)
+    }
   }
 
   // 归档模型

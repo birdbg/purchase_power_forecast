@@ -427,9 +427,9 @@ const TrainingJobs: React.FC = () => {
             rules={[{ required: true, message: '请选择训练算法' }]}
           >
             <Select placeholder="请选择算法">
-              <Option value="XGBoost">XGBoost</Option>
-              <Option value="LightGBM">LightGBM</Option>
-              <Option value="RandomForest">RandomForest</Option>
+              <Option value="xgboost">XGBoost</Option>
+              <Option value="lightgbm">LightGBM</Option>
+              <Option value="random_forest">RandomForest</Option>
             </Select>
           </Form.Item>
 
@@ -476,7 +476,7 @@ const TrainingJobs: React.FC = () => {
           bordered={false}
           style={{ background: '#f6f8fa', fontFamily: 'monospace', fontSize: 12, lineHeight: 1.8 }}
         >
-          <pre style={{ margin: 0, whiteSpace: 'pre-wrap' }}>{mockLogs}</pre>
+          <pre style={{ margin: 0, whiteSpace: 'pre-wrap' }}>{logs}</pre>
         </Card>
       </Drawer>
     </div>

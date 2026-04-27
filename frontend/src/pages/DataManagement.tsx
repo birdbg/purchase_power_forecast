@@ -195,13 +195,37 @@ const DataManagement: React.FC = () => {
 
   // 下载数据模板
   const handleDownloadTemplate = () => {
-    // 模拟下载
-    message.success('数据模板下载成功')
-    // 实际项目中可以创建一个a标签触发下载
+    const headers = [
+      'date',
+      'purchase_power',
+      'total_power',
+      'self_power',
+      'steel_output',
+      'rolling_output',
+      'temperature',
+      'is_holiday',
+      'is_maintenance',
+      'purchase_lag_1',
+      'purchase_lag_7',
+      'purchase_rolling_7'
+    ]
+
+    const rows = [
+      ['2026-01-01', '850.5', '1200.0', '350.0', '800.0', '720.0', '20.0', '0', '0', '840.2', '830.1', '835.6']
+    ]
+
+    const csvContent = [headers.join(','), ...rows.map(r => r.join(','))].join('\n')
+    const blob = new Blob(['\uFEFF' + csvContent], { type: 'text/csv;charset=utf-8;' })
+    const url = URL.createObjectURL(blob)
     const link = document.createElement('a')
-    link.href = '/data_template.csv'
+    link.href = url
     link.download = '外购电预测数据模板.csv'
-    // link.click()
+    document.body.appendChild(link)
+    link.click()
+    document.body.removeChild(link)
+    URL.revokeObjectURL(url)
+    
+    message.success('数据模板下载成功')
   }
 
   // 数据字段表列配置

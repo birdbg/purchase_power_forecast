@@ -297,7 +297,7 @@ def _get_active_dataset(dataset_type: str) -> dict[str, Any] | None:
 
 def _read_dataset_csv(dataset: dict[str, Any]) -> pd.DataFrame:
     """Read dataset CSV from its current file path."""
-    file_path = Path(dataset.get("repairedFilePath") or dataset["filePath"])
+    file_path = Path(dataset.get("filePathForTraining") or dataset.get("preparedFilePath") or dataset.get("repairedFilePath") or dataset["filePath"])
     if not file_path.exists():
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -774,11 +774,7 @@ def prepare_dataset(datasetId: str, input: PrepareDatasetInput):
     
     return {
         "success": True,
-        "datasetId": datasetId,
-        "preparedFilePath": str(prepared_file_path),
-        "rowCount": len(df),
-        "columns": list(df.columns),
-        "qualityStatus": dataset["qualityStatus"],
+        **dataset,
         "message": "数据准备完成, 已设为当前训练数据" if input.activate else "数据准备完成"
     }
 
@@ -1661,7 +1657,7 @@ def run_batch_prediction(input_data: Optional[RunPredictionInput] = None) -> dic
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="请先上传并激活训练数据集。")
         
         # Use prepared file path first
-        dataset_file_path = dataset.get("preparedFilePath") or dataset.get("repairedFilePath") or dataset["filePath"]
+        dataset_file_path = dataset.get("filePathForTraining") or dataset.get("preparedFilePath") or dataset.get("repairedFilePath") or dataset["filePath"]
         if not Path(dataset_file_path).exists():
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Dataset file not found: {dataset_file_path}")
         
@@ -1784,7 +1780,11 @@ def run_model_evaluation(version: str) -> dict[str, Any]:
         report_path = f"outputs/reports/evaluation_report_{version}.json"
         registry = get_registry()
         model_info = registry.get_model_info(version)
-        samples: list[dict[str, Any]] = []
+        samples: list[dict[str, Any]] = result.get("samples", [])
+
+        # Calculate abnormal and warning samples
+        abnormal_samples = len([s for s in samples if s.get("status") == "abnormal"])
+        warning_samples = len([s for s in samples if s.get("status") == "warning"])
 
         return {
             "success": True,
@@ -1794,9 +1794,9 @@ def run_model_evaluation(version: str) -> dict[str, Any]:
                 "trainDataRange": [model_info.get("train_data_start", "-"), model_info.get("train_data_end", "-")],
                 "metrics": metrics,
                 "samples": samples,
-                "totalSamples": int(result.get("test_sample_count", 0)),
-                "abnormalSamples": 0,
-                "warningSamples": 0,
+                "totalSamples": len(samples) if samples else int(result.get("test_sample_count", 0)),
+                "abnormalSamples": abnormal_samples,
+                "warningSamples": warning_samples,
             },
             "reportPath": report_path,
             "message": "评估完成"

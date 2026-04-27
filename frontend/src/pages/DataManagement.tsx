@@ -154,8 +154,9 @@ const DataManagement: React.FC = () => {
     try {
       const result = await prepareDataset(selectedDataset.datasetId, { autoRepair, activate })
       message.success(result.message || '数据准备完成')
+      setSelectedDataset(result)
       await loadDatasets()
-      await handleQualityCheck(selectedDataset)
+      await handleQualityCheck(result)
     } catch (error: any) {
       message.error(error?.response?.data?.detail || error.message || '数据准备失败')
     } finally {
@@ -299,6 +300,15 @@ const DataManagement: React.FC = () => {
             )}
             <Descriptions.Item label="字段" span={2}>{selectedDataset.columns.join(', ')}</Descriptions.Item>
           </Descriptions>
+
+          {selectedDataset.columns.includes('purchase_lag_1') && selectedDataset.columns.includes('purchase_lag_7') && selectedDataset.columns.includes('purchase_rolling_7') && (
+            <Alert
+              message="已生成滞后特征和 7 天均值特征，可用于模型训练"
+              type="success"
+              showIcon
+              style={{ marginTop: 16 }}
+            />
+          )}
         </Card>
       )}
 

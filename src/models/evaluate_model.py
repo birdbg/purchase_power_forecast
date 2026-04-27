@@ -105,6 +105,44 @@ def evaluate_model(
     y_pred = model.predict(X_test)
     metrics = evaluate_regression(y_test, y_pred)
     print_metrics(metrics, "模型评估结果")
+    
+    # Generate sample records
+    samples: list[dict[str, Any]] = []
+    # Get date column if exists
+    date_col = data_config.get("date_col", "date")
+    for idx, (actual, predict) in enumerate(zip(y_test, y_pred)):
+        # Get date from test set index or use placeholder
+        if date_col in train_df.columns and idx < len(train_df.iloc[split_index:]):
+            date_val = train_df.iloc[split_index + idx][date_col]
+            if isinstance(date_val, pd.Timestamp):
+                date_str = date_val.strftime("%Y-%m-%d")
+            else:
+                date_str = str(date_val)
+        else:
+            date_str = f"2025-01-{idx + 1:02d}"
+        
+        error = abs(predict - actual)
+        error_rate = round(error / actual * 100, 2) if actual > 0 else 0
+        
+        # Determine status
+        if error_rate >= 10:
+            status = "abnormal"
+        elif error_rate >= 5:
+            status = "warning"
+        else:
+            status = "normal"
+        
+        samples.append({
+          "id": f"eval_{idx}",
+          "datetime": date_str,
+          "predictValue": float(predict) if not isinstance(predict, float) else predict,
+          "actualValue": float(actual) if not isinstance(actual, float) else actual,
+          "error": float(error) if not isinstance(error, float) else error,
+          "errorRate": float(error_rate) if not isinstance(error_rate, float) else error_rate,
+          "modelVersion": model_info["model_id"],
+          "status": status
+        })
+    
     # Step 5: Save evaluation report
     print(f"\n[步骤 5/5] 保存评估报告...")
     report = {
@@ -116,6 +154,7 @@ def evaluate_model(
         "feature_count": len(feature_list),
         "features": feature_list,
         "data_path": str(data_path),
+        "samples": samples,
     }
     if output_path is None:
         output_path = f"outputs/reports/evaluation_report_{model_info['model_id']}.json"

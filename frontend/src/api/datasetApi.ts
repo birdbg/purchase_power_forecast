@@ -23,6 +23,7 @@ export interface DatasetInfo {
     abnormalCount: number
   }
   isActive: boolean
+  message?: string
 }
 
 export interface QualityCheckResult {
@@ -90,6 +91,6 @@ export interface PrepareDatasetResponse {
 export const prepareDataset = async (
   datasetId: string,
   payload: { autoRepair?: boolean; activate?: boolean } = { autoRepair: true, activate: true }
-): Promise<PrepareDatasetResponse> => {
-  return http.post<any, PrepareDatasetResponse>(`/api/datasets/${datasetId}/prepare`, payload)
+): Promise<DatasetInfo> => {
+  return http.post<any, DatasetInfo>(`/api/datasets/${datasetId}/prepare`, payload)
 }

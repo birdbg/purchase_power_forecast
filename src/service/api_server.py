@@ -1135,25 +1135,66 @@ def activate_dataset(dataset_id: str, input_data: ActivateDatasetInput) -> dict[
 @app.get("/api/dashboard/summary", response_model=DashboardSummaryOutput)
 def get_dashboard_summary() -> dict[str, Any]:
     """Get dashboard summary statistics."""
-    # Try to get real data first
     try:
         registry = get_registry()
         production_model = registry.get_production_model_info()
         versions = registry.list_versions()
         
+        # Read prediction result CSV
+        pred_file = Path("outputs/reports/prediction_result.csv")
+        today_prediction = 0
+        today_error_rate = 0
+        abnormal_count = 0
+        total_predictions = 0
+        
+        if pred_file.exists():
+            try:
+                import pandas as pd
+                from datetime import datetime
+                df = pd.read_csv(pred_file)
+                total_predictions = len(df)
+                
+                # Get today's data
+                today_str = datetime.now().strftime("%Y-%m-%d")
+                today_df = df[df["datetime"].str.startswith(today_str)] if "datetime" in df.columns else df[df["date"].str.startswith(today_str)] if "date" in df.columns else pd.DataFrame()
+                
+                if len(today_df) > 0:
+                    today_prediction = today_df["predictValue"].iloc[-1] if "predictValue" in today_df.columns else today_df["predicted_purchase_power"].iloc[-1] if "predicted_purchase_power" in today_df.columns else 0
+                    actual_value = today_df["actualValue"].iloc[-1] if "actualValue" in today_df.columns else today_df["purchase_power"].iloc[-1] if "purchase_power" in today_df.columns else None
+                    if actual_value and actual_value > 0:
+                        error = abs(today_prediction - actual_value)
+                        today_error_rate = round(error / actual_value * 100, 2)
+                
+                # Calculate abnormal count
+                for _, row in df.iterrows():
+                    error_rate = row.get("errorRate")
+                    if pd.isna(error_rate):
+                        actual = row.get("actualValue") or row.get("purchase_power")
+                        predict = row.get("predictValue") or row.get("predicted_purchase_power")
+                        if actual and actual > 0 and predict:
+                            error_rate = round(abs(predict - actual) / actual * 100, 2)
+                    
+                    if not pd.isna(error_rate) and error_rate >= 10:
+                        abnormal_count += 1
+            except Exception:
+                pass
+        
         return {
             "currentModelVersion": production_model["model_id"],
             "currentAlgorithm": production_model.get("algorithm", "RandomForest"),
-            "latestMape": production_model.get("metrics", {}).get("mape", 4.21),
-            "todayPrediction": 895.67,
-            "todayErrorRate": 3.89,
-            "abnormalCount": 3,
+            "latestMape": production_model.get("metrics", {}).get("mape", 0),
+            "todayPrediction": round(float(today_prediction), 2) if today_prediction else 0,
+            "todayErrorRate": round(float(today_error_rate), 2) if today_error_rate else 0,
+            "abnormalCount": abnormal_count,
             "totalModelVersions": len(versions),
-            "totalPredictions": 1245,
+            "totalPredictions": total_predictions,
             "hasProductionModel": True,
             "message": None,
         }
-    except Exception:
+    except ModelNotFoundError:
+        # No production model
+        registry = get_registry()
+        versions = registry.list_versions()
         return {
             "currentModelVersion": "-",
             "currentAlgorithm": "-",
@@ -1161,11 +1202,79 @@ def get_dashboard_summary() -> dict[str, Any]:
             "todayPrediction": 0,
             "todayErrorRate": 0,
             "abnormalCount": 0,
-            "totalModelVersions": 0,
+            "totalModelVersions": len(versions),
             "totalPredictions": 0,
             "hasProductionModel": False,
-            "message": "暂无生产模型",
+            "message": "暂无生产模型，请先训练并发布模型",
         }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to get dashboard summary: {str(e)}")
+
+
+@app.get("/api/dashboard/prediction-trend")
+def get_prediction_trend(days: int = Query(30, ge=1, le=90)):
+    """Get prediction vs actual trend data for last N days."""
+    pred_file = Path("outputs/reports/prediction_result.csv")
+    if not pred_file.exists():
+        return []
+    
+    try:
+        import pandas as pd
+        df = pd.read_csv(pred_file)
+        records = []
+        
+        # Take last N records
+        for _, row in df.tail(days).iterrows():
+            datetime_val = row.get("datetime") if pd.notna(row.get("datetime")) else row.get("date")
+            predict_val = row.get("predictValue") if pd.notna(row.get("predictValue")) else row.get("predicted_purchase_power", 0)
+            actual_val = row.get("actualValue") if pd.notna(row.get("actualValue")) else row.get("purchase_power")
+            
+            records.append({
+                "datetime": str(datetime_val) if pd.notna(datetime_val) else "",
+                "predictValue": float(predict_val) if pd.notna(predict_val) else 0,
+                "actualValue": float(actual_val) if pd.notna(actual_val) else None
+            })
+        
+        return records
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to get prediction trend: {str(e)}")
+
+
+@app.get("/api/dashboard/error-trend")
+def get_error_trend(days: int = Query(30, ge=1, le=90)):
+    """Get error rate trend data for last N days."""
+    pred_file = Path("outputs/reports/prediction_result.csv")
+    if not pred_file.exists():
+        return []
+    
+    try:
+        import pandas as pd
+        df = pd.read_csv(pred_file)
+        records = []
+        
+        # Take last N records
+        for _, row in df.tail(days).iterrows():
+            datetime_val = row.get("datetime") if pd.notna(row.get("datetime")) else row.get("date")
+            
+            # Calculate error rate if not present
+            error_rate = row.get("errorRate")
+            if pd.isna(error_rate):
+                actual = row.get("actualValue") or row.get("purchase_power")
+                predict = row.get("predictValue") or row.get("predicted_purchase_power")
+                if actual and actual > 0 and predict:
+                    error_rate = round(abs(predict - actual) / actual * 100, 2)
+                else:
+                    error_rate = 0
+            
+            records.append({
+                "datetime": str(datetime_val) if pd.notna(datetime_val) else "",
+                "errorRate": float(error_rate) if pd.notna(error_rate) else 0,
+                "threshold": 5
+            })
+        
+        return records
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to get error trend: {str(e)}")
 
 
 @app.get("/api/models", response_model=List[ModelVersion])
@@ -1310,27 +1419,6 @@ def get_model_evaluation(version: str) -> Dict[str, Any]:
     }
 
 
-@app.get("/api/predictions", response_model=List[PredictionRecord])
-def get_prediction_records(
-    date_start: Optional[str] = Query(None, description="Start date in YYYY-MM-DD format"),
-    date_end: Optional[str] = Query(None, description="End date in YYYY-MM-DD format"),
-    model_version: Optional[str] = Query(None, description="Filter by model version"),
-    status: Optional[str] = Query(None, description="Filter by status")
-) -> List[Dict[str, Any]]:
-    """Get prediction records with optional filters."""
-    predictions = get_mock_predictions()
-    
-    # Apply filters
-    if date_start:
-        predictions = [p for p in predictions if p["datetime"] >= date_start]
-    if date_end:
-        predictions = [p for p in predictions if p["datetime"] <= date_end]
-    if model_version:
-        predictions = [p for p in predictions if p["modelVersion"] == model_version]
-    if status:
-        predictions = [p for p in predictions if p["status"] == status]
-    
-    return predictions
 
 
 @app.post("/api/training/jobs", response_model=CreateTrainingJobOutput)
@@ -1652,9 +1740,19 @@ def run_batch_prediction(input_data: Optional[RunPredictionInput] = None) -> dic
     try:
         input_data = input_data or RunPredictionInput()
         dataset_id = input_data.datasetId
-        dataset = _get_dataset(dataset_id) if dataset_id else _get_active_dataset("training")
+        if dataset_id:
+            dataset = _get_dataset(dataset_id)
+        else:
+            # Priority: active prediction dataset first, then active training dataset
+            dataset = _get_active_dataset("prediction") or _get_active_dataset("training")
         if not dataset:
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="请先上传并激活训练数据集。")
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="请先上传并准备历史数据集。")
+        
+        # Check if there is a production model
+        registry = get_registry()
+        production_model = registry.get_production_model_info()
+        if not production_model:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="请先发布 production 模型。")
         
         # Use prepared file path first
         dataset_file_path = dataset.get("filePathForTraining") or dataset.get("preparedFilePath") or dataset.get("repairedFilePath") or dataset["filePath"]
@@ -1770,6 +1868,21 @@ def get_prediction_records(
     return predictions
   except Exception as e:
     raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to load predictions: {str(e)}")
+
+
+from fastapi.responses import FileResponse
+
+@app.get("/api/predictions/export")
+def export_predictions():
+    """Export all prediction records as CSV file."""
+    file_path = Path("outputs/reports/prediction_result.csv")
+    if not file_path.exists():
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="暂无预测结果，请先执行批量预测。")
+    return FileResponse(
+        path=file_path,
+        filename="prediction_result.csv",
+        media_type="text/csv"
+    )
 
 
 @app.post("/api/evaluation/{version}/run")

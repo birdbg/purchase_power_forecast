@@ -6,6 +6,8 @@ import {
 import { DownloadOutlined, CheckCircleOutlined, WarningOutlined, CloseCircleOutlined, PlayCircleOutlined, ReloadOutlined } from '@ant-design/icons'
 import { getPredictionResults, runPrediction, exportPredictionResults } from '@/api/predictApi'
 import { getActiveDatasets, type DatasetInfo } from '@/api/datasetApi'
+import { getModelList } from '@/api/modelApi'
+import type { ModelVersion } from '@/types/model'
 import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend,
   BarChart, Bar, ResponsiveContainer, Cell
@@ -43,6 +45,17 @@ const PredictionMonitor: React.FC = () => {
   const [batchPredictLoading, setBatchPredictLoading] = useState(false)
   const [activePredictionDataset, setActivePredictionDataset] = useState<DatasetInfo | null>(null)
   const [activeTrainingDataset, setActiveTrainingDataset] = useState<DatasetInfo | null>(null)
+  const [models, setModels] = useState<ModelVersion[]>([])
+  
+  const loadModels = async () => {
+    try {
+      const modelList = await getModelList()
+      setModels(Array.isArray(modelList) ? modelList : [])
+    } catch (error) {
+      console.error(error)
+      setModels([])
+    }
+  }
   
   const loadActiveDataset = async () => {
     try {
@@ -70,6 +83,7 @@ const PredictionMonitor: React.FC = () => {
   useEffect(() => {
     loadActiveDataset()
     loadPredictions()
+    loadModels()
   }, [])
 
   // 筛选后的数据
@@ -98,7 +112,8 @@ const PredictionMonitor: React.FC = () => {
   const handleRefresh = async () => {
     await Promise.all([
       loadActiveDataset(),
-      loadPredictions()
+      loadPredictions(),
+      loadModels()
     ])
   }
 
@@ -306,17 +321,23 @@ const PredictionMonitor: React.FC = () => {
           </Col>
           <Col xs={24} sm={8}>
             <Text strong style={{ marginRight: 8 }}>模型版本：</Text>
-            <Select
-              value={modelVersion}
-              onChange={setModelVersion}
-              style={{ width: 'calc(100% - 80px)' }}
-              placeholder="请选择模型版本"
-            >
-              <Option value="all">全部版本</Option>
-              {modelVersionOptions.map(version => (
-                <Option key={version} value={version}>{version}</Option>
-              ))}
-            </Select>
+            {models.length === 0 ? (
+              <Text type="danger" style={{ marginLeft: 8 }}>暂无模型版本，请先训练并发布模型。</Text>
+            ) : (
+              <Select
+                value={modelVersion}
+                onChange={setModelVersion}
+                style={{ width: 'calc(100% - 80px)' }}
+                placeholder="请选择模型版本"
+              >
+                <Option value="all">全部版本</Option>
+                {models.map(model => (
+                  <Option key={model.version} value={model.version}>
+                    {model.version} - {model.algorithm} - {model.status}
+                  </Option>
+                ))}
+              </Select>
+            )}
           </Col>
           <Col xs={24} sm={8}>
             <Text strong style={{ marginRight: 8 }}>误差状态：</Text>

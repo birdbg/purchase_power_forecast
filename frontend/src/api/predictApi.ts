@@ -2,6 +2,7 @@ import http, { USE_MOCK } from './http'
 import { mockPredictions } from '@/mock/mockData'
 import type { PredictionRecord, PredictParams, RunPredictPayload, PredictResult } from '@/types/predict'
 import dayjs from 'dayjs'
+import axios from 'axios'
 
 // 获取预测结果列表
 export const getPredictionResults = async (params?: PredictParams): Promise<PredictResult> => {
@@ -65,11 +66,32 @@ export const singlePredict = async (payload: any): Promise<{ success: boolean; p
 }
 
 // 导出预测结果
-export const exportPredictionResults = async (params?: PredictParams): Promise<{ downloadUrl: string }> => {
+export const exportPredictionResults = async (params?: PredictParams): Promise<void> => {
   if (USE_MOCK) {
-    return Promise.resolve({
-      downloadUrl: '/download/prediction_result.xlsx'
-    })
+    // Mock mode: trigger dummy download
+    const blob = new Blob(['mock,data\n1,2'], { type: 'text/csv;charset=utf-8;' })
+    const url = URL.createObjectURL(blob)
+    const link = document.createElement('a')
+    link.href = url
+    link.download = 'prediction_result_mock.csv'
+    document.body.appendChild(link)
+    link.click()
+    document.body.removeChild(link)
+    URL.revokeObjectURL(url)
+    return
   }
-  return http.get<any, { downloadUrl: string }>('/api/predictions/export', { params, responseType: 'blob' })
+  const baseUrl = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000'
+  const urlParams = params ? new URLSearchParams(params as any).toString() : ''
+  const fullUrl = `${baseUrl}/api/predictions/export${urlParams ? `?${urlParams}` : ''}`
+  
+  const response = await axios.get(fullUrl, { responseType: 'blob' })
+  const blob = new Blob([response.data], { type: 'text/csv;charset=utf-8;' })
+  const url = URL.createObjectURL(blob)
+  const link = document.createElement('a')
+  link.href = url
+  link.download = 'prediction_result.csv'
+  document.body.appendChild(link)
+  link.click()
+  document.body.removeChild(link)
+  URL.revokeObjectURL(url)
 }

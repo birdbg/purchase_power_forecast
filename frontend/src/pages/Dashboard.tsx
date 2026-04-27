@@ -38,8 +38,23 @@ const Dashboard: React.FC = () => {
         ])
         setSummary(summaryRes)
         setHasProductionModel(summaryRes.hasProductionModel ?? true)
-        setTrendData(Array.isArray(trendRes) ? trendRes : [])
-        setErrorData(Array.isArray(errorRes) ? errorRes : [])
+        
+        // Normalize trend data field mapping
+        const normalizedTrendData = Array.isArray(trendRes) ? trendRes.map((item: any) => ({
+          date: item.date || item.datetime,
+          actual: item.actual ?? item.actualValue,
+          predict: item.predict ?? item.predictValue
+        })) : []
+        setTrendData(normalizedTrendData)
+        
+        // Normalize error trend data field mapping
+        const normalizedErrorData = Array.isArray(errorRes) ? errorRes.map((item: any) => ({
+          date: item.date || item.datetime,
+          errorRate: item.errorRate,
+          threshold: item.threshold ?? 5
+        })) : []
+        setErrorData(normalizedErrorData)
+        
         const records = Array.isArray(recordsRes) ? recordsRes : recordsRes.records ?? []
         setRecentRecords(records.map((item: any, idx: number) => {
           const errorRate = item.errorRate ?? 0

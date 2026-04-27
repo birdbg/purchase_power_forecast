@@ -30,7 +30,7 @@ export const getPredictionTrend = async (days = 30): Promise<TrendData[]> => {
       actualValue: item.actualValue
     })))
   }
-  return http.get<TrendData[]>('/api/dashboard/prediction-trend', { params: { days } }).then(res => res.data)
+  return http.get<any, TrendData[]>('/api/dashboard/prediction-trend', { params: { days } })
 }
 
 // 获取误差趋势数据
@@ -42,5 +42,5 @@ export const getErrorTrend = async (days = 30): Promise<ErrorTrendData[]> => {
       threshold: 5
     })))
   }
-  return http.get<ErrorTrendData[]>('/api/dashboard/error-trend', { params: { days } }).then(res => res.data)
+  return http.get<any, ErrorTrendData[]>('/api/dashboard/error-trend', { params: { days } })
 }

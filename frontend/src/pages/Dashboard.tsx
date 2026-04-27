@@ -1,72 +1,69 @@
 import React, { useState, useEffect } from 'react'
-import { Card, Row, Col, Statistic, Table, Tag, Spin, Typography } from 'antd'
+import { Card, Row, Col, Statistic, Table, Tag, Spin, Typography, Alert, Empty } from 'antd'
 import type { TableProps } from 'antd'
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts'
 import { ArrowDownOutlined, CheckCircleOutlined, WarningOutlined, CloseCircleOutlined } from '@ant-design/icons'
+import { getDashboardSummary, getPredictionTrend, getErrorTrend } from '@/api/dashboardApi'
+import { getPredictionResults } from '@/api/predictApi'
 
 const { Title } = Typography
 
-// 模拟指标数据
-const stats = {
-  modelVersion: 'v1.2.0',
-  latestMape: 4.2,
-  todayPrediction: 1256.8,
-  todayErrorRate: 3.8
+interface RecentRecord {
+  id: string | number
+  date: string
+  predict: number | string
+  actual: number | string | null
+  errorRate: number | string | null
+  modelVersion: string
+  status: '优秀' | '正常' | '异常'
 }
-
-// 模拟最近30天预测vs实际数据
-const trendData = Array.from({ length: 30 }, (_, i) => {
-  const date = new Date()
-  date.setDate(date.getDate() - (29 - i))
-  const actual = Math.random() * 500 + 800
-  const predict = actual + (Math.random() - 0.5) * 100
-  return {
-    date: date.toLocaleDateString('zh-CN').slice(5),
-    actual,
-    predict
-  }
-})
-
-// 模拟最近30天误差率数据
-const errorData = trendData.map(item => ({
-  date: item.date,
-  errorRate: Math.abs((item.predict - item.actual) / item.actual * 100)
-}))
-
-// 模拟最近10条预测记录
-const recentRecords = Array.from({ length: 10 }, (_, i) => {
-  const date = new Date()
-  date.setDate(date.getDate() - i)
-  const actual = Math.random() * 500 + 800
-  const predict = actual + (Math.random() - 0.5) * 100
-  const errorRate = Math.abs((predict - actual) / actual * 100)
-  
-  let status: '优秀' | '正常' | '异常'
-  if (errorRate < 5) status = '优秀'
-  else if (errorRate < 10) status = '正常'
-  else status = '异常'
-
-  return {
-    id: i + 1,
-    date: date.toLocaleDateString('zh-CN'),
-    predict: predict.toFixed(2),
-    actual: actual.toFixed(2),
-    errorRate: errorRate.toFixed(2),
-    modelVersion: ['v1.2.0', 'v1.1.0'][Math.floor(Math.random() * 2)],
-    status
-  }
-})
-
-type RecentRecord = typeof recentRecords[number]
 
 const Dashboard: React.FC = () => {
   const [loading, setLoading] = useState(true)
+  const [summary, setSummary] = useState<any>({})
+  const [trendData, setTrendData] = useState<any[]>([])
+  const [errorData, setErrorData] = useState<any[]>([])
+  const [recentRecords, setRecentRecords] = useState<RecentRecord[]>([])
+  const [hasProductionModel, setHasProductionModel] = useState(true)
 
   useEffect(() => {
-    // 模拟加载数据
-    setTimeout(() => {
-      setLoading(false)
-    }, 1000)
+    const fetchData = async () => {
+      setLoading(true)
+      try {
+        const [summaryRes, trendRes, errorRes, recordsRes] = await Promise.all([
+          getDashboardSummary(),
+          getPredictionTrend(30),
+          getErrorTrend(30),
+          getPredictionResults({ pageSize: 10 })
+        ])
+        setSummary(summaryRes)
+        setHasProductionModel(summaryRes.hasProductionModel ?? true)
+        setTrendData(Array.isArray(trendRes) ? trendRes : [])
+        setErrorData(Array.isArray(errorRes) ? errorRes : [])
+        const records = Array.isArray(recordsRes) ? recordsRes : recordsRes.records ?? []
+        setRecentRecords(records.map((item: any, idx: number) => {
+          const errorRate = item.errorRate ?? 0
+          let status: RecentRecord['status'] = '优秀'
+          if (errorRate >= 5 && errorRate < 10) status = '正常'
+          else if (errorRate >= 10) status = '异常'
+          return {
+            id: item.id ?? idx + 1,
+            date: item.datetime ?? item.date,
+            predict: item.predictValue ?? item.predicted_purchase_power,
+            actual: item.actualValue ?? item.purchase_power,
+            errorRate: errorRate.toFixed(2),
+            modelVersion: item.modelVersion ?? 'unknown',
+            status
+          }
+        }))
+      } catch (err) {
+        console.error('获取Dashboard数据失败', err)
+        setHasProductionModel(false)
+      } finally {
+        setLoading(false)
+      }
+    }
+    fetchData()
   }, [])
 
   // 表格列配置
@@ -135,6 +132,21 @@ const Dashboard: React.FC = () => {
     return <div style={{ textAlign: 'center', padding: '100px 0' }}><Spin size="large" /></div>
   }
 
+  if (!hasProductionModel) {
+    return (
+      <div>
+        <Title level={4} style={{ marginBottom: 24 }}>系统总览</Title>
+        <Alert
+          message="暂无生产模型，请先训练并发布模型。"
+          type="warning"
+          showIcon
+          style={{ marginBottom: 24 }}
+        />
+      </div>
+    )
+  }
+
+  const todayErrorRate = summary.todayErrorRate ?? 0
   return (
     <div>
       <Title level={4} style={{ marginBottom: 24 }}>系统总览</Title>
@@ -145,7 +157,7 @@ const Dashboard: React.FC = () => {
           <Card bordered={false}>
             <Statistic
               title="当前生产模型版本"
-              value={stats.modelVersion}
+              value={summary.currentModelVersion ?? '-'}
               valueStyle={{ color: '#1890ff', fontSize: 28 }}
             />
           </Card>
@@ -154,7 +166,7 @@ const Dashboard: React.FC = () => {
           <Card bordered={false}>
             <Statistic
               title="最新预测MAPE"
-              value={stats.latestMape}
+              value={summary.latestMape ?? 0}
               suffix="%"
               precision={2}
               valueStyle={{ color: '#52c41a', fontSize: 28 }}
@@ -166,7 +178,7 @@ const Dashboard: React.FC = () => {
           <Card bordered={false}>
             <Statistic
               title="今日预测外购电量"
-              value={stats.todayPrediction}
+              value={summary.todayPrediction ?? 0}
               suffix="万kWh"
               precision={1}
               valueStyle={{ color: '#722ed1', fontSize: 28 }}
@@ -177,10 +189,10 @@ const Dashboard: React.FC = () => {
           <Card bordered={false}>
             <Statistic
               title="今日预测误差率"
-              value={stats.todayErrorRate}
+              value={todayErrorRate}
               suffix="%"
               precision={2}
-              valueStyle={{ color: stats.todayErrorRate < 5 ? '#52c41a' : stats.todayErrorRate < 10 ? '#faad14' : '#ff4d4f', fontSize: 28 }}
+              valueStyle={{ color: todayErrorRate < 5 ? '#52c41a' : todayErrorRate < 10 ? '#faad14' : '#ff4d4f', fontSize: 28 }}
             />
           </Card>
         </Col>
@@ -221,13 +233,17 @@ const Dashboard: React.FC = () => {
 
       {/* 最近预测记录表格 */}
       <Card title="最近10条预测记录" bordered={false}>
-        <Table
-          columns={columns}
-          dataSource={recentRecords}
-          rowKey="id"
-          pagination={false}
-          scroll={{ x: 800 }}
-        />
+        {recentRecords.length > 0 ? (
+          <Table
+            columns={columns}
+            dataSource={recentRecords}
+            rowKey="id"
+            pagination={false}
+            scroll={{ x: 800 }}
+          />
+        ) : (
+          <Empty description="暂无预测记录" />
+        )}
       </Card>
     </div>
   )

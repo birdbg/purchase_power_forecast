@@ -442,6 +442,19 @@ def _quality_check_dataframe(df: pd.DataFrame) -> dict[str, Any]:
     }
 
 
+def _extract_dataset_date_range(df: pd.DataFrame) -> dict[str, Any]:
+    """Extract date range from dataset DataFrame."""
+    if "date" not in df.columns:
+        return {"dateStart": None, "dateEnd": None}
+    dates = pd.to_datetime(df["date"], errors="coerce").dropna()
+    if len(dates) == 0:
+        return {"dateStart": None, "dateEnd": None}
+    return {
+        "dateStart": dates.min().strftime("%Y-%m-%d"),
+        "dateEnd": dates.max().strftime("%Y-%m-%d")
+    }
+
+
 def _set_active_dataset(dataset: dict[str, Any], dataset_type: str) -> dict[str, Any]:
     """Set active dataset for training or prediction."""
     global ACTIVE_TRAINING_DATASET_ID, ACTIVE_PREDICTION_DATASET_ID
@@ -547,6 +560,7 @@ async def upload_dataset(file: UploadFile = File(...), datasetType: str = Form(.
     df = pd.read_csv(file_path)
     row_count = len(df)
     columns = list(df.columns)
+    date_range = _extract_dataset_date_range(df)
     
     dataset_id = f"ds_{str(uuid4())[:8]}"
     dataset = {
@@ -557,6 +571,13 @@ async def upload_dataset(file: UploadFile = File(...), datasetType: str = Form(.
         "repairedFilePath": None,
         "rowCount": row_count,
         "columns": columns,
+        "dateStart": date_range["dateStart"],
+        "dateEnd": date_range["dateEnd"],
+        "preparedDateStart": None,
+        "preparedDateEnd": None,
+        "preparedFilePath": None,
+        "filePathForTraining": None,
+        "isPrepared": False,
         "uploadedAt": datetime.now().isoformat(),
         "qualityStatus": "unchecked",
         "qualitySummary": {
@@ -630,6 +651,20 @@ def repair_dataset(datasetId: str, input: RepairDatasetInput):
                     detail="drop_duplicate_dates 操作需要 date 字段"
                 )
             df = df.drop_duplicates(subset=["date"], keep="last").reset_index(drop=True)
+        elif action == "sort_dates":
+            if "date" not in df.columns:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="sort_dates 操作需要 date 字段"
+                )
+            df["date"] = pd.to_datetime(df["date"], errors="coerce")
+            if df["date"].isna().any():
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="存在无法解析的 date，无法排序，请先修正日期格式"
+                )
+            df = df.sort_values("date").reset_index(drop=True)
+            df["date"] = df["date"].dt.strftime("%Y-%m-%d")
         elif action == "fill_missing_maintenance":
             if "is_maintenance" in df.columns:
                 df["is_maintenance"] = df["is_maintenance"].fillna(0).astype(int)
@@ -648,9 +683,12 @@ def repair_dataset(datasetId: str, input: RepairDatasetInput):
     repaired_file_path = processed_dir / repaired_file_name
     df.to_csv(repaired_file_path, index=False)
     
+    date_range = _extract_dataset_date_range(df)
     dataset["repairedFilePath"] = str(repaired_file_path)
     dataset["rowCount"] = len(df)
     dataset["columns"] = list(df.columns)
+    dataset["dateStart"] = date_range["dateStart"]
+    dataset["dateEnd"] = date_range["dateEnd"]
     
     return {
         "success": True,
@@ -706,6 +744,13 @@ def prepare_dataset(datasetId: str, input: PrepareDatasetInput):
     
     # Step 6: Remove rows with missing lag values (first 7 rows)
     df = df.dropna(subset=["purchase_lag_1", "purchase_lag_7"]).reset_index(drop=True)
+    
+    # Update date ranges
+    date_range = _extract_dataset_date_range(df)
+    dataset["dateStart"] = date_range["dateStart"]
+    dataset["dateEnd"] = date_range["dateEnd"]
+    dataset["preparedDateStart"] = date_range["dateStart"]
+    dataset["preparedDateEnd"] = date_range["dateEnd"]
     
     # Save prepared dataset
     processed_dir = Path("data/processed")
@@ -1389,6 +1434,36 @@ def run_training_job(input_data: CreateTrainingJobInput) -> dict[str, Any]:
     dataset = _get_dataset(input_data.datasetId) if input_data.datasetId else _get_active_dataset("training")
     if not dataset:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="请先上传数据集。")
+    
+    # Validate training date range
+    ds_start = dataset.get("preparedDateStart") or dataset.get("dateStart")
+    ds_end = dataset.get("preparedDateEnd") or dataset.get("dateEnd")
+    
+    if input_data.trainDataStart and input_data.trainDataEnd:
+        train_start = datetime.strptime(input_data.trainDataStart, "%Y-%m-%d")
+        train_end = datetime.strptime(input_data.trainDataEnd, "%Y-%m-%d")
+        
+        if train_start > train_end:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="训练开始日期不能晚于结束日期"
+            )
+        
+        if ds_start and ds_end:
+            ds_start_dt = datetime.strptime(ds_start, "%Y-%m-%d")
+            ds_end_dt = datetime.strptime(ds_end, "%Y-%m-%d")
+            
+            if train_start < ds_start_dt:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="训练开始日期超出数据集范围"
+                )
+            
+            if train_end > ds_end_dt:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="训练结束日期超出数据集范围"
+                )
     
     # Auto prepare if not already prepared
     if not dataset.get("isPrepared", False) or not dataset.get("preparedFilePath"):

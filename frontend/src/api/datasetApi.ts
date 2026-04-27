@@ -8,6 +8,13 @@ export interface DatasetInfo {
   repairedFilePath?: string | null
   rowCount: number
   columns: string[]
+  dateStart?: string | null
+  dateEnd?: string | null
+  preparedDateStart?: string | null
+  preparedDateEnd?: string | null
+  preparedFilePath?: string | null
+  filePathForTraining?: string | null
+  isPrepared?: boolean
   uploadedAt: string
   qualityStatus: 'unchecked' | 'passed' | 'warning' | 'failed'
   qualitySummary: {

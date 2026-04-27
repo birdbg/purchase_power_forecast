@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react'
+import dayjs from 'dayjs'
 import {
   Table, Button, Space, Tag, Card, Modal, Drawer, Form, Select, DatePicker,
   Input, Switch, message, Typography, Alert, Spin
@@ -50,6 +51,26 @@ const TrainingJobs: React.FC = () => {
   const [activeTrainingDataset, setActiveTrainingDataset] = useState<DatasetInfo | null>(null)
   const [form] = Form.useForm()
 
+  // Get dataset date range, prefer prepared date range
+  const getDatasetDateRange = (dataset?: DatasetInfo | null) => {
+    if (!dataset) return null
+    const start = dataset.preparedDateStart || dataset.dateStart
+    const end = dataset.preparedDateEnd || dataset.dateEnd
+    if (!start || !end) return null
+    return [dayjs(start), dayjs(end)]
+  }
+
+  // Disable dates outside dataset range
+  const disabledTrainingDate = (current: dayjs.Dayjs | null) => {
+    if (!current) return false
+    const datasetId = form.getFieldValue("datasetId")
+    const dataset = trainingDatasets.find(d => d.datasetId === datasetId) || activeTrainingDataset
+    const start = dataset?.preparedDateStart || dataset?.dateStart
+    const end = dataset?.preparedDateEnd || dataset?.dateEnd
+    if (!start || !end) return false
+    return current.isBefore(dayjs(start), 'day') || current.isAfter(dayjs(end), 'day')
+  }
+
   const loadDatasets = async () => {
     try {
       const [datasets, active] = await Promise.all([getDatasets(), getActiveDatasets()])
@@ -58,6 +79,10 @@ const TrainingJobs: React.FC = () => {
       setActiveTrainingDataset(active.training)
       if (active.training) {
         form.setFieldsValue({ datasetId: active.training.datasetId })
+        const dateRange = getDatasetDateRange(active.training)
+        if (dateRange) {
+          form.setFieldsValue({ dataRange: dateRange })
+        }
       }
     } catch (error) {
       console.error(error)
@@ -454,7 +479,6 @@ const TrainingJobs: React.FC = () => {
           >
             <Select placeholder="请选择模型类型">
               <Option value="purchase_power">外购电预测</Option>
-              <Option value="cold_rolling">冷轧用电量预测</Option>
             </Select>
           </Form.Item>
           
@@ -475,23 +499,65 @@ const TrainingJobs: React.FC = () => {
             label="训练数据范围"
             rules={[{ required: true, message: '请选择训练数据范围' }]}
           >
-            <RangePicker style={{ width: '100%' }} />
+            <RangePicker
+              style={{ width: '100%' }}
+              disabledDate={disabledTrainingDate}
+            />
           </Form.Item>
 
           <Form.Item
-            name="datasetId"
-            label="训练数据集"
-            rules={[{ required: true, message: '请选择训练数据集' }]}
-          >
-            <Select placeholder="请选择训练数据集" loading={loading}>
-              {trainingDatasets.map(dataset => (
-                <Option key={dataset.datasetId} value={dataset.datasetId}>
-                  {dataset.isActive ? '【当前激活】' : ''}{dataset.fileName} / {dataset.rowCount} 行 / {dataset.datasetId}
-                </Option>
-              ))}
-            </Select>
-          </Form.Item>
-          {!activeTrainingDataset && (
+           name="datasetId"
+           label="训练数据集"
+           rules={[{ required: true, message: '请选择训练数据集' }]}
+         >
+           <Select
+             placeholder="请选择训练数据集"
+             loading={loading}
+             onChange={(datasetId) => {
+               const dataset = trainingDatasets.find(d => d.datasetId === datasetId)
+               const range = getDatasetDateRange(dataset)
+               if (range) {
+                 form.setFieldsValue({ dataRange: range })
+               }
+             }}
+           >
+             {trainingDatasets.map(dataset => (
+               <Option key={dataset.datasetId} value={dataset.datasetId}>
+                 {dataset.isActive ? '【当前激活】' : ''}{dataset.fileName} / {dataset.rowCount} 行 / {dataset.datasetId}
+               </Option>
+             ))}
+           </Select>
+         </Form.Item>
+         
+         {/* Show dataset date range info */}
+         <div style={{ marginBottom: 16 }}>
+           {(() => {
+             const datasetId = form.getFieldValue("datasetId")
+             const dataset = trainingDatasets.find(d => d.datasetId === datasetId) || activeTrainingDataset
+             if (!dataset) return null
+             
+             const start = dataset.preparedDateStart || dataset.dateStart
+             const end = dataset.preparedDateEnd || dataset.dateEnd
+             
+             if (!start || !end) {
+               return (
+                 <Alert
+                   message="该数据集未识别到日期范围，请先执行数据准备或检查 date 字段。"
+                   type="warning"
+                   showIcon
+                 />
+               )
+             }
+             
+             return (
+               <div style={{ color: '#666', fontSize: '13px' }}>
+                 当前数据范围：{start} ~ {end}
+               </div>
+             )
+           })()}
+         </div>
+         
+         {!activeTrainingDataset && (
             <Alert
               message="请先在数据管理页面上传并激活训练数据集。"
               type="warning"

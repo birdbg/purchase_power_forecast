@@ -42,11 +42,13 @@ const PredictionMonitor: React.FC = () => {
   const [predictionData, setPredictionData] = useState<PredictionRecord[]>([])
   const [batchPredictLoading, setBatchPredictLoading] = useState(false)
   const [activePredictionDataset, setActivePredictionDataset] = useState<DatasetInfo | null>(null)
+  const [activeTrainingDataset, setActiveTrainingDataset] = useState<DatasetInfo | null>(null)
   
   const loadActiveDataset = async () => {
     try {
       const active = await getActiveDatasets()
       setActivePredictionDataset(active.prediction)
+      setActiveTrainingDataset(active.training)
     } catch (error) {
       console.error(error)
     }
@@ -145,14 +147,23 @@ const PredictionMonitor: React.FC = () => {
   ]
 
   const handleBatchPredict = async () => {
-    if (!activePredictionDataset) {
-      message.warning('请先在数据管理页面上传并激活预测输入数据集。')
+    const datasetToUse = activePredictionDataset || activeTrainingDataset
+    if (!datasetToUse) {
+      message.warning('请先在数据管理页面上传并激活训练数据集。')
       return
     }
     setBatchPredictLoading(true)
     try {
       message.loading('批量预测执行中，请稍候...', 0)
-      await runPrediction({ datasetId: activePredictionDataset.datasetId } as any)
+      let predictParams: any = {}
+      if (activePredictionDataset) {
+        predictParams.datasetId = activePredictionDataset.datasetId
+      } else {
+        predictParams.datasetId = datasetToUse.datasetId
+        predictParams.mode = "last_n"
+        predictParams.lastN = 7
+      }
+      await runPrediction(predictParams)
       message.destroy()
       message.success('批量预测完成，预测结果已生成')
       await loadPredictions()
@@ -205,7 +216,7 @@ const PredictionMonitor: React.FC = () => {
             icon={<PlayCircleOutlined />}
             onClick={handleBatchPredict}
             loading={batchPredictLoading}
-            disabled={!activePredictionDataset}
+            disabled={!activePredictionDataset && !activeTrainingDataset}
           >
             执行批量预测
           </Button>
@@ -218,9 +229,17 @@ const PredictionMonitor: React.FC = () => {
         </Space>
       </div>
 
-      {!activePredictionDataset && (
+      {!activePredictionDataset && activeTrainingDataset && (
         <Alert
-          message="请先在数据管理页面上传并激活预测输入数据集，才能执行批量预测。"
+          message="未设置预测输入数据集，将使用当前训练数据集最后 7 行进行预测验证。"
+          type="info"
+          showIcon
+          style={{ marginBottom: 24 }}
+        />
+      )}
+      {!activePredictionDataset && !activeTrainingDataset && (
+        <Alert
+          message="请先在数据管理页面上传并激活训练数据集。"
           type="warning"
           showIcon
           style={{ marginBottom: 24 }}

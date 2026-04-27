@@ -40,7 +40,8 @@ const fixActionLabel: Record<string, string> = {
   generate_lag: '生成 lag 特征',
   drop_duplicate_dates: '删除重复日期',
   fill_missing_maintenance: '检修空值填 0',
-  fill_missing_holiday: '节假日空值填 0'
+  fill_missing_holiday: '节假日空值填 0',
+  sort_dates: '按日期排序'
 }
 
 const DataManagement: React.FC = () => {
@@ -269,6 +270,15 @@ const DataManagement: React.FC = () => {
         </Col>
       </Row>
 
+      <Card bordered={false} style={{ marginBottom: 24 }}>
+        <Alert
+          message="MVP 阶段使用说明"
+          description="实验阶段可只上传一份历史数据。系统会使用该数据训练模型，并支持使用最后7天作为预测验证数据。预测输入CSV仅用于正式生产预测场景。"
+          type="info"
+          showIcon
+        />
+      </Card>
+
       {selectedDataset && (
         <Card title="当前选中数据集" bordered={false} style={{ marginBottom: 24 }}>
           <Descriptions bordered column={2} size="small">
@@ -277,6 +287,16 @@ const DataManagement: React.FC = () => {
             <Descriptions.Item label="文件名">{selectedDataset.fileName}</Descriptions.Item>
             <Descriptions.Item label="行数">{selectedDataset.rowCount}</Descriptions.Item>
             <Descriptions.Item label="文件路径" span={2}>{selectedDataset.filePath}</Descriptions.Item>
+            {selectedDataset.repairedFilePath && (
+              <Descriptions.Item label="修复后文件路径" span={2}>{selectedDataset.repairedFilePath}</Descriptions.Item>
+            )}
+            {selectedDataset.preparedFilePath && (
+              <Descriptions.Item label="特征工程后文件路径" span={2}>{selectedDataset.preparedFilePath}</Descriptions.Item>
+            )}
+            <Descriptions.Item label="日期范围">{selectedDataset.dateStart && selectedDataset.dateEnd ? `${selectedDataset.dateStart} 至 ${selectedDataset.dateEnd}` : '未检测到'}</Descriptions.Item>
+            {selectedDataset.preparedDateStart && selectedDataset.preparedDateEnd && (
+              <Descriptions.Item label="特征工程后日期范围">{`${selectedDataset.preparedDateStart} 至 ${selectedDataset.preparedDateEnd}`}</Descriptions.Item>
+            )}
             <Descriptions.Item label="字段" span={2}>{selectedDataset.columns.join(', ')}</Descriptions.Item>
           </Descriptions>
         </Card>

@@ -74,29 +74,23 @@ const PredictionMonitor: React.FC = () => {
   const columns: TableProps<PredictionRecord>['columns'] = [
     {
       title: '预测日期',
-      dataIndex: 'date',
-      key: 'date',
-      width: 120,
-      sorter: (a: any, b: any) => dayjs(a.date).valueOf() - dayjs(b.date).valueOf()
-    },
-    {
-      title: '预测时间',
-      dataIndex: 'time',
-      key: 'time',
-      width: 100
+      dataIndex: 'datetime',
+      key: 'datetime',
+      width: 180,
+      sorter: (a: any, b: any) => dayjs(a.datetime).valueOf() - dayjs(b.datetime).valueOf()
     },
     {
       title: '预测外购电量',
-      dataIndex: 'predict',
-      key: 'predict',
+      dataIndex: 'predictValue',
+      key: 'predictValue',
       width: 140,
       align: 'right',
       render: (val) => `${val} MWh`
     },
     {
       title: '实际外购电量',
-      dataIndex: 'actual',
-      key: 'actual',
+      dataIndex: 'actualValue',
+      key: 'actualValue',
       width: 140,
       align: 'right',
       render: (val) => `${val} MWh`
@@ -158,7 +152,7 @@ const PredictionMonitor: React.FC = () => {
     setBatchPredictLoading(true)
     try {
       message.loading('批量预测执行中，请稍候...', 0)
-      const result = await runPrediction({ datasetId: activePredictionDataset.datasetId } as any)
+      await runPrediction({ datasetId: activePredictionDataset.datasetId } as any)
       message.destroy()
       message.success('批量预测完成，预测结果已生成')
       await loadPredictions()
@@ -324,12 +318,12 @@ const PredictionMonitor: React.FC = () => {
           <ResponsiveContainer width="100%" height={400}>
             <LineChart data={predictionData}>
               <CartesianGrid strokeDasharray="3 3" />
-              <XAxis dataKey="date" />
+              <XAxis dataKey="datetime" />
               <YAxis />
               <Tooltip formatter={(val) => [`${Number(val).toFixed(1)} MWh`, '']} />
               <Legend />
-              <Line type="monotone" dataKey="actual" stroke="#1890ff" name="实际外购电" strokeWidth={2} dot={false} />
-              <Line type="monotone" dataKey="predict" stroke="#52c41a" name="预测外购电" strokeWidth={2} dot={false} />
+              <Line type="monotone" dataKey="actualValue" stroke="#1890ff" name="实际外购电" strokeWidth={2} dot={false} />
+              <Line type="monotone" dataKey="predictValue" stroke="#52c41a" name="预测外购电" strokeWidth={2} dot={false} />
             </LineChart>
           </ResponsiveContainer>
         ) : (
@@ -347,7 +341,7 @@ const PredictionMonitor: React.FC = () => {
               <ResponsiveContainer width="100%" height={300}>
                 <LineChart data={predictionData}>
                   <CartesianGrid strokeDasharray="3 3" />
-                  <XAxis dataKey="date" />
+                  <XAxis dataKey="datetime" />
                   <YAxis />
                   <Tooltip formatter={(val) => [`${Number(val).toFixed(2)}%`, '误差率']} />
                   <Legend />

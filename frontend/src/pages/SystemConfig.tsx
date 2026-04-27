@@ -2,7 +2,7 @@ import React from 'react'
 import { Form, Input, Select, Switch, Slider, Button, Card, Alert, Typography, Space, message, Row, Col, InputNumber } from 'antd'
 import { SaveOutlined, RollbackOutlined } from '@ant-design/icons'
 
-const { Title, Text } = Typography
+const { Title } = Typography
 const { Option } = Select
 const { Item: FormItem } = Form
 

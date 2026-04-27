@@ -1,5 +1,5 @@
 import React from 'react'
-import { Card, Statistic, Space, Tag } from 'antd'
+import { Card, Statistic, Space } from 'antd'
 import { ArrowUpOutlined, ArrowDownOutlined, MinusOutlined } from '@ant-design/icons'
 
 export interface MetricCardProps {

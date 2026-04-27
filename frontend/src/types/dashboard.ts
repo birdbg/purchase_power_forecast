@@ -1,13 +1,15 @@
 // 仪表盘统计汇总类型
 export interface DashboardSummary {
-  totalPredictions: number
-  averageMape: number
+  hasProductionModel: boolean
+  currentModelVersion: string
+  currentAlgorithm: string
+  latestMape: number
+  todayPrediction: number
+  todayErrorRate: number
+  abnormalCount: number
   totalModelVersions: number
-  currentProductionModel: string
-  predictionAccuracy: number
-  dataCoverage: number
-  lastPredictionTime: string
-  nextScheduledTraining: string
+  totalPredictions: number
+  message?: string
 }
 
 // 预测趋势数据点

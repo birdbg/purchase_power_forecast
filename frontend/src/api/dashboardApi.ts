@@ -6,38 +6,41 @@ import type { DashboardSummary, TrendData, ErrorTrendData } from '@/types/dashbo
 export const getDashboardSummary = async (): Promise<DashboardSummary> => {
   if (USE_MOCK) {
     return Promise.resolve({
+      hasProductionModel: true,
       currentModelVersion: mockDashboard.summary.currentModelVersion,
       currentAlgorithm: mockDashboard.summary.currentAlgorithm,
       latestMape: mockDashboard.summary.latestMape,
       todayPrediction: mockDashboard.summary.todayPrediction,
       todayErrorRate: mockDashboard.summary.todayErrorRate,
-      totalModels: mockDashboard.modelVersions.length,
-      runningJobs: 1,
-      totalPredictions: mockPredictions.length
+      abnormalCount: 0,
+      totalModelVersions: mockDashboard.modelVersions.length,
+      totalPredictions: mockPredictions.length,
+      message: undefined
     })
   }
-  return http.get<DashboardSummary>('/api/dashboard/summary')
+  return http.get<any, DashboardSummary>('/api/dashboard/summary')
 }
 
 // 获取预测趋势数据
 export const getPredictionTrend = async (days = 30): Promise<TrendData[]> => {
   if (USE_MOCK) {
     return Promise.resolve(mockPredictions.slice(-days).map(item => ({
-      date: item.date,
-      predicted: item.predictionValue,
-      actual: item.actualValue
+      datetime: item.date,
+      predictValue: item.predictionValue,
+      actualValue: item.actualValue
     })))
   }
-  return http.get<TrendData[]>('/api/dashboard/prediction-trend', { params: { days } })
+  return http.get<TrendData[]>('/api/dashboard/prediction-trend', { params: { days } }).then(res => res.data)
 }
 
 // 获取误差趋势数据
 export const getErrorTrend = async (days = 30): Promise<ErrorTrendData[]> => {
   if (USE_MOCK) {
     return Promise.resolve(mockPredictions.slice(-days).map(item => ({
-      date: item.date,
-      errorRate: item.errorRate
+      datetime: item.date,
+      errorRate: item.errorRate,
+      threshold: 5
     })))
   }
-  return http.get<ErrorTrendData[]>('/api/dashboard/error-trend', { params: { days } })
+  return http.get<ErrorTrendData[]>('/api/dashboard/error-trend', { params: { days } }).then(res => res.data)
 }

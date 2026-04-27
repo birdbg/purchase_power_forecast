@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react'
 import { Card, Row, Col, Statistic, Table, Tag, Spin, Typography } from 'antd'
+import type { TableProps } from 'antd'
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts'
 import { ArrowDownOutlined, CheckCircleOutlined, WarningOutlined, CloseCircleOutlined } from '@ant-design/icons'
 
@@ -56,6 +57,8 @@ const recentRecords = Array.from({ length: 10 }, (_, i) => {
   }
 })
 
+type RecentRecord = typeof recentRecords[number]
+
 const Dashboard: React.FC = () => {
   const [loading, setLoading] = useState(true)
 
@@ -67,7 +70,7 @@ const Dashboard: React.FC = () => {
   }, [])
 
   // 表格列配置
-  const columns = [
+  const columns: TableProps<RecentRecord>['columns'] = [
     {
       title: '预测日期',
       dataIndex: 'date',
@@ -79,21 +82,21 @@ const Dashboard: React.FC = () => {
       dataIndex: 'predict',
       key: 'predict',
       width: 150,
-      align: 'right'
+      align: 'right' as const
     },
     {
       title: '实际值(万kWh)',
       dataIndex: 'actual',
       key: 'actual',
       width: 150,
-      align: 'right'
+      align: 'right' as const
     },
     {
       title: '误差率(%)',
       dataIndex: 'errorRate',
       key: 'errorRate',
       width: 120,
-      align: 'right',
+      align: 'right' as const,
       render: (rate: string) => {
         const num = parseFloat(rate)
         let color = '#52c41a'

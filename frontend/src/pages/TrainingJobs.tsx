@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react'
 import {
   Table, Button, Space, Tag, Card, Modal, Drawer, Form, Select, DatePicker,
-  Input, Switch, message, Typography, Row, Col, Alert, Spin
+  Input, Switch, message, Typography, Alert, Spin
 } from 'antd'
 import { getTrainingJobs, createTrainingJob, getTrainingLog } from '@/api/trainApi'
 import {
@@ -10,10 +10,9 @@ import {
   CloseCircleOutlined, PauseCircleOutlined
 } from '@ant-design/icons'
 import type { TableProps } from 'antd'
-import dayjs from 'dayjs'
 import { getActiveDatasets, getDatasets, type DatasetInfo } from '@/api/datasetApi'
 
-const { Title, Text } = Typography
+const { Title } = Typography
 const { RangePicker } = DatePicker
 const { Option } = Select
 

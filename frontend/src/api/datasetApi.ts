@@ -68,3 +68,21 @@ export const repairDataset = async (datasetId: string, actions: string[]): Promi
 export const activateDataset = async (datasetId: string, datasetType: 'training' | 'prediction'): Promise<DatasetInfo> => {
   return http.post<any, DatasetInfo>(`/api/datasets/${datasetId}/activate`, { datasetType })
 }
+
+export interface PrepareDatasetResponse {
+  success: boolean
+  datasetId: string
+  preparedFilePath?: string
+  repairedFilePath?: string
+  rowCount?: number
+  columns?: string[]
+  qualityStatus?: 'unchecked' | 'passed' | 'warning' | 'failed'
+  message: string
+}
+
+export const prepareDataset = async (
+  datasetId: string,
+  payload: { autoRepair?: boolean; activate?: boolean } = { autoRepair: true, activate: true }
+): Promise<PrepareDatasetResponse> => {
+  return http.post<any, PrepareDatasetResponse>(`/api/datasets/${datasetId}/prepare`, payload)
+}

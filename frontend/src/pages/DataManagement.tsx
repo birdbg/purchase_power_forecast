@@ -99,16 +99,6 @@ const DataManagement: React.FC = () => {
     }
   }
 
-  const predictUploadProps: UploadProps = {
-    name: 'file',
-    accept: '.csv,.xlsx,.xls',
-    showUploadList: false,
-    beforeUpload: (file) => {
-      handleUpload(file, 'prediction')
-      return false
-    }
-  }
-
   const handleQualityCheck = async (dataset = selectedDataset) => {
     if (!dataset) {
       message.warning('请先选择或上传数据集')

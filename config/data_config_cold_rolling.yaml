@@ -1,0 +1,59 @@
+# Data configuration for Cold Rolling electricity consumption forecasting
+dataset_name: cold_rolling_power_forecast
+
+# Data paths
+paths:
+  raw_data: data/raw/cold_rolling_power_data.csv
+  processed_data: data/processed/cold_rolling_processed_data.csv
+  prediction_input: data/prediction/cold_rolling_predict_input.csv
+  prediction_output: outputs/predictions/cold_rolling_predictions.csv
+  truth_data: outputs/reports/cold_rolling_truth_last7.csv
+
+# Date column
+datetime_column: date
+datetime_format: "%Y-%m-%d"
+
+# Target column for prediction
+target_column: power_consumption
+
+# Feature columns
+feature_columns:
+  # Production features
+  - planned_output
+  - actual_output
+  - downtime_hours
+  # Calendar features
+  - is_holiday
+  - is_maintenance
+  # Lag features
+  - purchase_lag_1
+  - purchase_lag_7
+  - purchase_rolling_7
+
+# Categorical features
+categorical_features:
+  - is_holiday
+  - is_maintenance
+
+# Numeric features
+numeric_features:
+  - planned_output
+  - actual_output
+  - downtime_hours
+  - purchase_lag_1
+  - purchase_lag_7
+  - purchase_rolling_7
+
+# Data splitting configuration
+split:
+  type: time_based
+  test_size: 0.2
+  validation_size: 0.1
+  shuffle: False
+
+# Data cleaning configuration
+cleaning:
+  drop_duplicates: True
+  fill_missing: True
+  outlier_removal: True
+  outlier_threshold: 3.0 # Z-score threshold

@@ -348,6 +348,59 @@ pytest tests/test_metrics.py
 
 ---
 
+## 冷轧用电量预测使用说明
+
+### 1. 数据准备
+```bash
+# 准备冷轧数据集，输入包含"冷轧"工作表的Excel文件
+python scripts/prepare_cold_rolling_data.py --input path/to/your/cold_rolling_data.xlsx
+```
+
+输出文件：
+- `data/raw/cold_rolling_power_data.csv`: 处理后的完整训练数据集
+- `data/prediction/cold_rolling_predict_input.csv`: 最近7天的预测输入数据（目标字段已置空）
+- `outputs/reports/cold_rolling_truth_last7.csv`: 最近7天的真实值，用于验证预测精度
+
+### 2. 训练冷轧预测模型
+```bash
+# 使用冷轧配置训练模型
+python src/models/train_model.py \
+  --data-config config/data_config_cold_rolling.yaml \
+  --model-config config/model_config_cold_rolling.yaml \
+  --algorithm xgboost
+```
+
+### 3. 发布模型到生产环境
+```bash
+# 列出所有模型版本
+python src/registry/model_registry.py list
+
+# 发布指定版本为生产模型（替换<model_version>为实际版本号）
+python src/registry/model_registry.py promote --model-id <model_version> \
+  --model-config config/model_config_cold_rolling.yaml
+```
+
+### 4. 批量预测冷轧用电量
+```bash
+# 使用生产模型进行批量预测
+python src/models/predict_model.py \
+  --data-config config/data_config_cold_rolling.yaml \
+  --model-config config/model_config_cold_rolling.yaml
+```
+
+预测结果保存到：`outputs/predictions/cold_rolling_predictions.csv`
+
+### 5. 评估模型效果
+```bash
+# 评估指定模型版本（替换<model_version>为实际版本号）
+python src/models/evaluate_model.py \
+  --model-version <model_version> \
+  --data-config config/data_config_cold_rolling.yaml \
+  --model-config config/model_config_cold_rolling.yaml
+```
+
+评估报告保存到：`outputs/evaluation/cold_rolling_evaluation_report.json`
+
 ## 项目结构图
 
 ```

@@ -422,6 +422,18 @@ const TrainingJobs: React.FC = () => {
           }}
         >
           <Form.Item
+            name="modelName"
+            label="选择模型类型"
+            rules={[{ required: true, message: '请选择模型类型' }]}
+            initialValue="purchase_power"
+          >
+            <Select placeholder="请选择模型类型">
+              <Option value="purchase_power">外购电预测</Option>
+              <Option value="cold_rolling">冷轧用电量预测</Option>
+            </Select>
+          </Form.Item>
+          
+          <Form.Item
             name="algorithm"
             label="选择算法"
             rules={[{ required: true, message: '请选择训练算法' }]}

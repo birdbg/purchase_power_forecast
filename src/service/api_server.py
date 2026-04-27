@@ -857,14 +857,18 @@ def run_training_job(input_data: CreateTrainingJobInput) -> dict[str, Any]:
         job["logs"].append({"timestamp": datetime.now().isoformat(), "level": "info", "content": f"生成模型版本: {model_version}"})
         job["progress"] = 30.0
         
+        # Select config based on model name
+        if input_data.modelName == "cold_rolling":
+            data_config_path = "config/data_config_cold_rolling.yaml"
+            model_config_path = "config/model_config_cold_rolling.yaml"
+        else:
+            data_config_path = "config/data_config.yaml"
+            model_config_path = "config/model_config.yaml"
+            
         result = train_model(
-            model_name=input_data.modelName,
-            algorithm=input_data.algorithm,
-            model_version=model_version,
-            train_start_date=input_data.trainDataStart,
-            train_end_date=input_data.trainDataEnd,
-            params=input_data.params,
-            remark=input_data.remark
+            data_config_path=data_config_path,
+            model_config_path=model_config_path,
+            model_name=input_data.algorithm,
         )
         
         job["progress"] = 100.0

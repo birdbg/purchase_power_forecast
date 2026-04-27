@@ -246,7 +246,7 @@ npm run dev
 - **数据管理**：上传数据，查看数据质量报告，下载模板
 - **系统配置**：配置模型参数、评估阈值等
 
-> 💡 前端默认使用Mock数据，如需连接真实后端，请修改 `frontend/src/api/http.ts` 中的 `USE_MOCK = false`
+> 💡 前端默认连接真实后端，如需使用Mock数据，请复制 `frontend/.env.example` 为 `frontend/.env`，并修改 `VITE_USE_MOCK = true`。如果后端地址不是默认的 `http://localhost:8000`，可以修改 `VITE_API_BASE_URL` 配置。
 
 ---
 

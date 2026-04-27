@@ -99,6 +99,10 @@ def train_model(
     if len(raw_df) == 0:
         raise ValueError("No training data found in selected date range")
     
+    # Validate minimum data size
+    if len(raw_df) < 10:
+        raise ValueError("所选日期范围内可训练数据不足, 请扩大日期范围")
+    
     # Warn if data is too small
     if len(raw_df) < 30:
         import warnings
@@ -118,6 +122,11 @@ def train_model(
     print(f"\n[步骤 3/6] 构建特征...")
     train_df = build_training_dataset(cleaned_df, data_config, model_config)
     print(f"  训练数据集: {train_df.shape[0]} 行, {train_df.shape[1]} 列")
+
+    # Generate model ID early for file naming
+    selected_model = model_name or model_config.get("algorithm", "xgboost")
+    config_model_name = model_config.get("model_name", "purchase_power")
+    model_id = f"v{datetime.now().strftime('%Y%m%d_%H%M%S')}"
 
     # Prepare features and target
     target_col = model_config.get("target") or data_config.get("target_col", "purchase_power")
@@ -172,11 +181,6 @@ def train_model(
     y_pred = model.predict(X_test)
     metrics = evaluate_regression(y_test, y_pred)
     print_metrics(metrics, "测试集评估结果")
-
-    # Generate model version
-    selected_model = model_name or model_config.get("algorithm", "xgboost")
-    config_model_name = model_config.get("model_name", "purchase_power")
-    model_id = f"v{datetime.now().strftime('%Y%m%d_%H%M%S')}"
 
     # Create model directory
     model_store_dir = Path(model_config.get("registry", {}).get("model_store_dir", "model_store"))
@@ -272,6 +276,14 @@ def train_model(
         "model_id": model_id,
         "metrics": metrics,
         "artifact_path": str(artifact_path),
+        "feature_dataset_path": str(feature_path) if save_splits else None,
+        "train_dataset_path": str(train_path) if save_splits else None,
+        "test_dataset_path": str(test_path) if save_splits else None,
+        "train_sample_count": len(X_train),
+        "test_sample_count": len(X_test),
+        "train_data_start": actual_train_start,
+        "train_data_end": actual_train_end,
+        "split_ratio": model_config.get("train_test_split_ratio", 0.2)
     }
 
 

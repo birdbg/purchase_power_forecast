@@ -283,7 +283,12 @@ const ModelManagement: React.FC = () => {
 
   return (
     <div>
-      <Title level={4} style={{ marginBottom: 24 }}>模型版本管理</Title>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24 }}>
+        <Title level={4} style={{ margin: 0 }}>模型版本管理</Title>
+        <Button icon={<ReloadOutlined />} onClick={loadModels} loading={loading}>
+          刷新模型列表
+        </Button>
+      </div>
 
       {loadError && (
         <Alert

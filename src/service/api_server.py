@@ -210,9 +210,17 @@ class ActivateDatasetInput(BaseModel):
     datasetType: str = Field(description="training or prediction")
 
 
+class PrepareDatasetInput(BaseModel):
+    """Schema for preparing dataset input."""
+    autoRepair: bool = Field(default=True)
+    activate: bool = Field(default=True)
+
+
 class RunPredictionInput(BaseModel):
     """Schema for running batch prediction input."""
     datasetId: Optional[str] = None
+    mode: str = Field(default="last_n", description="Prediction mode: last_n or full")
+    lastN: int = Field(default=7, ge=1, description="Number of last rows to use for prediction")
 
 
 class CreateTrainingJobOutput(BaseModel):
@@ -658,6 +666,76 @@ def activate_dataset(datasetId: str, input: ActivateDatasetInput):
     dataset = _get_dataset(datasetId)
     updated_dataset = _set_active_dataset(dataset, input.datasetType)
     return updated_dataset
+
+
+@app.post("/api/datasets/{datasetId}/prepare", summary="Prepare dataset for training with auto repair")
+def prepare_dataset(datasetId: str, input: PrepareDatasetInput):
+    """Prepare dataset for training with automatic repair and feature generation."""
+    dataset = _get_dataset(datasetId)
+    df = _read_dataset_csv(dataset)
+    
+    # Validate required fields
+    missing_fields = [field for field in REQUIRED_DATASET_FIELDS if field not in df.columns]
+    if missing_fields:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"数据集缺少必填字段: {', '.join(missing_fields)}"
+        )
+    
+    # Step 1: Sort by date
+    df["date"] = pd.to_datetime(df["date"], errors="coerce")
+    df = df.sort_values("date").reset_index(drop=True)
+    
+    # Step 2: Remove duplicate dates, keep last occurrence
+    df = df.drop_duplicates(subset=["date"], keep="last").reset_index(drop=True)
+    
+    # Step 3: Fill missing holiday and maintenance values
+    df["is_holiday"] = df["is_holiday"].fillna(0).astype(int)
+    df["is_maintenance"] = df["is_maintenance"].fillna(0).astype(int)
+    
+    # Step 4: Convert numeric fields to proper types
+    for field in NUMERIC_DATASET_FIELDS[:6]:  # Only base fields, not lag fields
+        df[field] = pd.to_numeric(df[field], errors="coerce")
+    
+    # Step 5: Generate lag features
+    purchase = df["purchase_power"]
+    df["purchase_lag_1"] = purchase.shift(1)
+    df["purchase_lag_7"] = purchase.shift(7)
+    # Shift 1 to exclude current day's data to avoid leakage
+    df["purchase_rolling_7"] = purchase.shift(1).rolling(window=7, min_periods=1).mean()
+    
+    # Step 6: Remove rows with missing lag values (first 7 rows)
+    df = df.dropna(subset=["purchase_lag_1", "purchase_lag_7"]).reset_index(drop=True)
+    
+    # Save prepared dataset
+    processed_dir = Path("data/processed")
+    processed_dir.mkdir(parents=True, exist_ok=True)
+    prepared_file_name = f"{datasetId}_prepared.csv"
+    prepared_file_path = processed_dir / prepared_file_name
+    df.to_csv(prepared_file_path, index=False, date_format="%Y-%m-%d")
+    
+    # Update dataset metadata
+    dataset["preparedFilePath"] = str(prepared_file_path)
+    dataset["filePathForTraining"] = str(prepared_file_path)
+    dataset["repairedFilePath"] = str(prepared_file_path)
+    dataset["rowCount"] = len(df)
+    dataset["columns"] = list(df.columns)
+    dataset["isPrepared"] = True
+    dataset["qualityStatus"] = "passed" if len(df) >= 30 else "warning"
+    
+    # Activate if requested
+    if input.activate:
+        _set_active_dataset(dataset, "training")
+    
+    return {
+        "success": True,
+        "datasetId": datasetId,
+        "preparedFilePath": str(prepared_file_path),
+        "rowCount": len(df),
+        "columns": list(df.columns),
+        "qualityStatus": dataset["qualityStatus"],
+        "message": "数据准备完成, 已设为当前训练数据" if input.activate else "数据准备完成"
+    }
 
 
 @app.get("/api/datasets", summary="List all datasets")
@@ -1310,10 +1388,64 @@ def run_training_job(input_data: CreateTrainingJobInput) -> dict[str, Any]:
     ]
     dataset = _get_dataset(input_data.datasetId) if input_data.datasetId else _get_active_dataset("training")
     if not dataset:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="请先上传并激活训练数据集。")
-    if dataset["datasetType"] != "training":
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="请选择 training 类型的数据集。")
-    dataset_file_path = dataset.get("repairedFilePath") or dataset["filePath"]
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="请先上传数据集。")
+    
+    # Auto prepare if not already prepared
+    if not dataset.get("isPrepared", False) or not dataset.get("preparedFilePath"):
+        # Run prepare steps automatically
+        df = _read_dataset_csv(dataset)
+        
+        # Validate required fields
+        missing_fields = [field for field in REQUIRED_DATASET_FIELDS if field not in df.columns]
+        if missing_fields:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"数据集缺少必填字段: {', '.join(missing_fields)}"
+            )
+        
+        # Step 1: Sort by date
+        df["date"] = pd.to_datetime(df["date"], errors="coerce")
+        df = df.sort_values("date").reset_index(drop=True)
+        
+        # Step 2: Remove duplicate dates, keep last occurrence
+        df = df.drop_duplicates(subset=["date"], keep="last").reset_index(drop=True)
+        
+        # Step 3: Fill missing holiday and maintenance values
+        df["is_holiday"] = df["is_holiday"].fillna(0).astype(int)
+        df["is_maintenance"] = df["is_maintenance"].fillna(0).astype(int)
+        
+        # Step 4: Convert numeric fields to proper types
+        for field in NUMERIC_DATASET_FIELDS[:6]:  # Only base fields, not lag fields
+            df[field] = pd.to_numeric(df[field], errors="coerce")
+        
+        # Step 5: Generate lag features
+        purchase = df["purchase_power"]
+        df["purchase_lag_1"] = purchase.shift(1)
+        df["purchase_lag_7"] = purchase.shift(7)
+        # Shift 1 to exclude current day's data to avoid leakage
+        df["purchase_rolling_7"] = purchase.shift(1).rolling(window=7, min_periods=1).mean()
+        
+        # Step 6: Remove rows with missing lag values (first 7 rows)
+        df = df.dropna(subset=["purchase_lag_1", "purchase_lag_7"]).reset_index(drop=True)
+        
+        # Save prepared dataset
+        processed_dir = Path("data/processed")
+        processed_dir.mkdir(parents=True, exist_ok=True)
+        prepared_file_name = f"{dataset['datasetId']}_prepared.csv"
+        prepared_file_path = processed_dir / prepared_file_name
+        df.to_csv(prepared_file_path, index=False, date_format="%Y-%m-%d")
+        
+        # Update dataset metadata
+        dataset["preparedFilePath"] = str(prepared_file_path)
+        dataset["filePathForTraining"] = str(prepared_file_path)
+        dataset["repairedFilePath"] = str(prepared_file_path)
+        dataset["rowCount"] = len(df)
+        dataset["columns"] = list(df.columns)
+        dataset["isPrepared"] = True
+        dataset["qualityStatus"] = "passed" if len(df) >= 30 else "warning"
+    
+    # Use prepared file path first
+    dataset_file_path = dataset.get("preparedFilePath") or dataset.get("filePathForTraining") or dataset.get("repairedFilePath") or dataset["filePath"]
     
     # Add job to list first
     job = {
@@ -1445,21 +1577,39 @@ def get_training_job_logs(job_id: str) -> List[Dict[str, Any]]:
 
 @app.post("/api/predictions/run")
 def run_batch_prediction(input_data: Optional[RunPredictionInput] = None) -> dict[str, Any]:
-    """Run batch prediction task."""
+    """Run batch prediction task with simplified last_n mode for MVP."""
     try:
-        dataset_id = input_data.datasetId if input_data else None
-        dataset = _get_dataset(dataset_id) if dataset_id else _get_active_dataset("prediction")
+        input_data = input_data or RunPredictionInput()
+        dataset_id = input_data.datasetId
+        dataset = _get_dataset(dataset_id) if dataset_id else _get_active_dataset("training")
         if not dataset:
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="请先上传并激活预测输入数据集。")
-        if dataset["datasetType"] != "prediction":
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="请选择 prediction 类型的数据集。")
-        dataset_file_path = dataset.get("repairedFilePath") or dataset["filePath"]
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="请先上传并激活训练数据集。")
+        
+        # Use prepared file path first
+        dataset_file_path = dataset.get("preparedFilePath") or dataset.get("repairedFilePath") or dataset["filePath"]
         if not Path(dataset_file_path).exists():
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Dataset file not found: {dataset_file_path}")
-
-        result = run_batch_predict(data_path=dataset_file_path, output_path="outputs/reports/prediction_result.csv")
+        
+        # Handle last_n mode: take last N rows from dataset
+        if input_data.mode == "last_n":
+            df = pd.read_csv(dataset_file_path)
+            last_n_rows = df.tail(input_data.lastN).copy()
+            
+            # Save temporary file for prediction
+            temp_dir = Path("data/temp")
+            temp_dir.mkdir(parents=True, exist_ok=True)
+            temp_file_path = temp_dir / f"prediction_last_{input_data.lastN}.csv"
+            last_n_rows.to_csv(temp_file_path, index=False)
+            
+            # Run prediction on the last N rows
+            result = run_batch_predict(data_path=str(temp_file_path), output_path="outputs/reports/prediction_result.csv")
+            sample_count = len(last_n_rows)
+        else:
+            # Full dataset mode
+            result = run_batch_predict(data_path=dataset_file_path, output_path="outputs/reports/prediction_result.csv")
+            sample_count = result.get("sample_count", 0)
+        
         output_path = result.get("output_path", "outputs/reports/prediction_result.csv")
-        sample_count = result.get("sample_count", 0)
         model_version = result.get("model_id", result.get("model_version", "unknown"))
         
         return {

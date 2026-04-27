@@ -10,7 +10,7 @@ import {
 } from '@ant-design/icons'
 import {
   activateDataset, getActiveDatasets, getDatasets, qualityCheckDataset,
-  repairDataset, uploadDataset, type DatasetInfo, type QualityCheckResult
+  repairDataset, uploadDataset, prepareDataset, type DatasetInfo, type QualityCheckResult
 } from '@/api/datasetApi'
 
 const { Title, Text, Paragraph } = Typography
@@ -53,6 +53,7 @@ const DataManagement: React.FC = () => {
   const [loading, setLoading] = useState(false)
   const [checking, setChecking] = useState(false)
   const [repairing, setRepairing] = useState(false)
+  const [preparing, setPreparing] = useState(false)
 
   const loadDatasets = async () => {
     setLoading(true)
@@ -153,6 +154,24 @@ const DataManagement: React.FC = () => {
     }
   }
 
+  const handlePrepare = async (autoRepair = true, activate = true) => {
+    if (!selectedDataset) {
+      message.warning('请先选择数据集')
+      return
+    }
+    setPreparing(true)
+    try {
+      const result = await prepareDataset(selectedDataset.datasetId, { autoRepair, activate })
+      message.success(result.message || '数据准备完成')
+      await loadDatasets()
+      await handleQualityCheck(selectedDataset)
+    } catch (error: any) {
+      message.error(error?.response?.data?.detail || error.message || '数据准备失败')
+    } finally {
+      setPreparing(false)
+    }
+  }
+
   const handleActivate = async (dataset: DatasetInfo, datasetType: 'training' | 'prediction') => {
     try {
       await activateDataset(dataset.datasetId, datasetType)
@@ -232,10 +251,10 @@ const DataManagement: React.FC = () => {
 
       <Card bordered={false} style={{ marginBottom: 24 }}>
         <Space wrap>
-          <Upload {...historyUploadProps}><Button icon={<UploadOutlined />} loading={loading}>上传训练 CSV</Button></Upload>
-          <Upload {...predictUploadProps}><Button icon={<UploadOutlined />} loading={loading}>上传预测输入 CSV</Button></Upload>
-          <Button onClick={() => handleQualityCheck()} loading={checking} type="primary">数据质量检查</Button>
+          <Upload {...historyUploadProps}><Button icon={<UploadOutlined />} loading={loading}>上传历史数据 CSV</Button></Upload>
+          <Button onClick={() => handleQualityCheck()} loading={checking}>数据质量检查</Button>
           <Button icon={<ToolOutlined />} onClick={() => handleRepair()} loading={repairing}>修复数据</Button>
+          <Button type="primary" onClick={() => handlePrepare()} loading={preparing}>一键检查并准备数据</Button>
           <Button icon={<ReloadOutlined />} onClick={loadDatasets} loading={loading}>刷新数据集</Button>
           <Button icon={<DownloadOutlined />} onClick={handleDownloadTemplate}>下载数据模板</Button>
         </Space>

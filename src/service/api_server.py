@@ -1705,63 +1705,71 @@ def run_batch_prediction(input_data: Optional[RunPredictionInput] = None) -> dic
 
 @app.get("/api/predictions", response_model=List[PredictionRecord])
 def get_prediction_records(
-    date_start: Optional[str] = Query(None, description="Start date in YYYY-MM-DD format"),
-    date_end: Optional[str] = Query(None, description="End date in YYYY-MM-DD format"),
-    model_version: Optional[str] = Query(None, description="Filter by model version"),
-    status: Optional[str] = Query(None, description="Filter by status")
+  date_start: Optional[str] = Query(None, description="Start date in YYYY-MM-DD format"),
+  date_end: Optional[str] = Query(None, description="End date in YYYY-MM-DD format"),
+  model_version: Optional[str] = Query(None, description="Filter by model version"),
+  status: Optional[str] = Query(None, description="Filter by status")
 ) -> List[Dict[str, Any]]:
-    """Get prediction records with optional filters."""
-    try:
-        pred_file = Path("outputs/reports/prediction_result.csv")
-        if pred_file.exists():
-            df = pd.read_csv(pred_file)
-            predictions = []
-            
-            for idx, row in df.iterrows():
-                actual = row.get("purchase_power")
-                predict_val = row.get("prediction_value", row.get("prediction", row.get("predicted_purchase_power", 0)))
-                actual = None if pd.isna(actual) else actual
-                error = abs(predict_val - actual) if actual is not None else None
-                error_rate = round(error / actual * 100, 2) if actual is not None and actual > 0 else None
-                
-                # Determine status
-                if actual is None:
-                    record_status = "pending"
-                elif error_rate > 10:
-                    record_status = "abnormal"
-                elif error_rate > 5:
-                    record_status = "warning"
-                else:
-                    record_status = "normal"
-                
-                predictions.append({
-                    "id": f"pred_{idx}",
-                    "datetime": row.get("date", row.get("datetime", datetime.now().isoformat())),
-                    "predictValue": float(predict_val),
-                    "actualValue": float(actual) if actual is not None else None,
-                    "error": float(error) if error is not None else None,
-                    "errorRate": error_rate,
-                    "modelVersion": row.get("model_version", "unknown"),
-                    "algorithm": row.get("algorithm", "RandomForest"),
-                    "status": record_status,
-                    "createdAt": row.get("predict_time", datetime.now().isoformat())
-                })
-            
-            # Apply filters
-            if date_start:
-                predictions = [p for p in predictions if p["datetime"] >= date_start]
-            if date_end:
-                predictions = [p for p in predictions if p["datetime"] <= date_end]
-            if model_version:
-                predictions = [p for p in predictions if p["modelVersion"] == model_version]
-            if status:
-                predictions = [p for p in predictions if p["status"] == status]
-            
-            return predictions
-    except Exception as e:
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to load predictions: {str(e)}")
-
+  """Get prediction records with optional filters."""
+  pred_file = Path("outputs/reports/prediction_result.csv")
+  if not pred_file.exists():
     return []
+  
+  try:
+    df = pd.read_csv(pred_file)
+    predictions = []
+    
+    for idx, row in df.iterrows():
+      # 字段映射，兼容新旧字段
+      datetime_val = row.get("datetime") if pd.notna(row.get("datetime")) else row.get("date")
+      actual_val = row.get("actualValue") if pd.notna(row.get("actualValue")) else row.get("purchase_power")
+      predict_val = row.get("predictValue") if pd.notna(row.get("predictValue")) else row.get("prediction_value", row.get("prediction", row.get("predicted_purchase_power", 0)))
+      model_version_val = row.get("modelVersion") if pd.notna(row.get("modelVersion")) else row.get("model_version", "unknown")
+      created_at_val = row.get("createdAt") if pd.notna(row.get("createdAt")) else row.get("predict_time", datetime.now().isoformat())
+      algorithm_val = row.get("algorithm", "RandomForest")
+      
+      # 如果CSV里没有error和errorRate则计算
+      error = row.get("error") if pd.notna(row.get("error")) else (abs(predict_val - actual_val) if pd.notna(actual_val) else None)
+      error_rate = row.get("errorRate") if pd.notna(row.get("errorRate")) else (round(abs(error / actual_val) * 100, 2) if pd.notna(actual_val) and actual_val > 0 else None)
+      
+      # 计算status
+      record_status = row.get("status")
+      if not record_status or pd.isna(record_status):
+        if not pd.notna(actual_val):
+          record_status = "pending"
+        elif error_rate >= 10:
+          record_status = "abnormal"
+        elif error_rate >= 5:
+          record_status = "warning"
+        else:
+          record_status = "normal"
+      
+      predictions.append({
+        "id": f"pred_{idx}",
+        "datetime": str(datetime_val) if pd.notna(datetime_val) else "",
+        "predictValue": float(predict_val) if pd.notna(predict_val) else 0,
+        "actualValue": float(actual_val) if pd.notna(actual_val) else None,
+        "error": float(error) if pd.notna(error) else None,
+        "errorRate": float(error_rate) if pd.notna(error_rate) else None,
+        "modelVersion": str(model_version_val),
+        "algorithm": str(algorithm_val),
+        "status": str(record_status),
+        "createdAt": str(created_at_val)
+      })
+    
+    # 应用过滤条件
+    if date_start:
+      predictions = [p for p in predictions if p["datetime"] >= date_start]
+    if date_end:
+      predictions = [p for p in predictions if p["datetime"] <= date_end]
+    if model_version:
+      predictions = [p for p in predictions if p["modelVersion"] == model_version]
+    if status:
+      predictions = [p for p in predictions if p["status"] == status]
+    
+    return predictions
+  except Exception as e:
+    raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to load predictions: {str(e)}")
 
 
 @app.post("/api/evaluation/{version}/run")

@@ -72,6 +72,36 @@ const PredictionMonitor: React.FC = () => {
     loadPredictions()
   }, [])
 
+  // 筛选后的数据
+  const filteredPredictionData = predictionData.filter(item => {
+    const itemDate = dayjs(item.datetime)
+    const [start, end] = dateRange || []
+    const matchDate =
+      (!start || itemDate.isSame(start, 'day') || itemDate.isAfter(start, 'day')) &&
+      (!end || itemDate.isSame(end, 'day') || itemDate.isBefore(end, 'day'))
+
+    const matchModel =
+      modelVersion === 'all' || item.modelVersion === modelVersion
+
+    const matchStatus =
+      errorStatus === 'all' || item.status === errorStatus
+
+    return matchDate && matchModel && matchStatus
+  })
+
+  // 模型版本下拉选项
+  const modelVersionOptions = Array.from(
+    new Set(predictionData.map(item => item.modelVersion).filter(Boolean))
+  )
+
+  // 刷新按钮事件
+  const handleRefresh = async () => {
+    await Promise.all([
+      loadActiveDataset(),
+      loadPredictions()
+    ])
+  }
+
   // 表格列配置
   const columns: TableProps<PredictionRecord>['columns'] = [
     {
@@ -186,22 +216,22 @@ const PredictionMonitor: React.FC = () => {
   }
 
   // 计算指标
-  const last7DaysAvgError = predictionData.length > 0 
-    ? predictionData.slice(-7).reduce((sum, item) => sum + (item.errorRate ?? 0), 0) / Math.min(7, predictionData.length)
+  const last7DaysAvgError = filteredPredictionData.length > 0
+    ? filteredPredictionData.slice(-7).reduce((sum, item) => sum + (item.errorRate ?? 0), 0) / Math.min(7, filteredPredictionData.length)
     : 0
-  const last30DaysAvgError = predictionData.length > 0
-    ? predictionData.reduce((sum, item) => sum + (item.errorRate ?? 0), 0) / predictionData.length
+  const last30DaysAvgError = filteredPredictionData.length > 0
+    ? filteredPredictionData.reduce((sum, item) => sum + (item.errorRate ?? 0), 0) / filteredPredictionData.length
     : 0
-  const maxDayError = predictionData.length > 0
-    ? Math.max(...predictionData.map(item => item.errorRate ?? 0))
+  const maxDayError = filteredPredictionData.length > 0
+    ? Math.max(...filteredPredictionData.map(item => item.errorRate ?? 0))
     : 0
-  const errorCount: number = predictionData.filter(item => (item.errorRate ?? 0) >= 10).length
+  const errorCount: number = filteredPredictionData.filter(item => (item.errorRate ?? 0) >= 10).length
 
   // 生成模型版本误差对比数据
   const modelVersionErrorData: ModelVersionError[] = Array.from(
-    new Set(predictionData.map(item => item.modelVersion))
+    new Set(filteredPredictionData.map(item => item.modelVersion))
   ).map(version => {
-    const versionData = predictionData.filter(item => item.modelVersion === version)
+    const versionData = filteredPredictionData.filter(item => item.modelVersion === version)
     const avgErrorRate = versionData.reduce((sum, item) => sum + (item.errorRate ?? 0), 0) / versionData.length
     return { version, avgErrorRate }
   })
@@ -223,7 +253,7 @@ const PredictionMonitor: React.FC = () => {
           <Button icon={<DownloadOutlined />} onClick={handleExport}>
             导出CSV
           </Button>
-          <Button icon={<ReloadOutlined />} onClick={loadPredictions} loading={loading}>
+          <Button icon={<ReloadOutlined />} onClick={handleRefresh} loading={loading}>
             刷新
           </Button>
         </Space>
@@ -241,6 +271,23 @@ const PredictionMonitor: React.FC = () => {
         <Alert
           message="请先在数据管理页面上传并激活训练数据集。"
           type="warning"
+          showIcon
+          style={{ marginBottom: 24 }}
+        />
+      )}
+
+      {/* 数据来源提示 */}
+      {filteredPredictionData.length > 0 ? (
+        <Alert
+          message={`当前展示真实预测结果，共 ${filteredPredictionData.length} 条，模型版本：${Array.from(new Set(filteredPredictionData.map(i => i.modelVersion))).join('、')}，数据来自 outputs/reports/prediction_result.csv。`}
+          type="success"
+          showIcon
+          style={{ marginBottom: 24 }}
+        />
+      ) : (
+        <Alert
+          message="暂无真实预测结果，请先执行批量预测。系统不会展示 mock 数据。"
+          type="info"
           showIcon
           style={{ marginBottom: 24 }}
         />
@@ -266,6 +313,9 @@ const PredictionMonitor: React.FC = () => {
               placeholder="请选择模型版本"
             >
               <Option value="all">全部版本</Option>
+              {modelVersionOptions.map(version => (
+                <Option key={version} value={version}>{version}</Option>
+              ))}
             </Select>
           </Col>
           <Col xs={24} sm={8}>
@@ -333,9 +383,9 @@ const PredictionMonitor: React.FC = () => {
 
       {/* 主图表：预测vs实际 */}
       <Card title="预测外购电 vs 实际外购电" bordered={false} style={{ marginBottom: 24 }}>
-        {predictionData.length > 0 ? (
+        {filteredPredictionData.length > 0 ? (
           <ResponsiveContainer width="100%" height={400}>
-            <LineChart data={predictionData}>
+            <LineChart data={filteredPredictionData}>
               <CartesianGrid strokeDasharray="3 3" />
               <XAxis dataKey="datetime" />
               <YAxis />
@@ -356,9 +406,9 @@ const PredictionMonitor: React.FC = () => {
       <Row gutter={[16, 16]} style={{ marginBottom: 24 }}>
         <Col xs={24} lg={12}>
           <Card title="每日误差率趋势" bordered={false}>
-            {predictionData.length > 0 ? (
+            {filteredPredictionData.length > 0 ? (
               <ResponsiveContainer width="100%" height={300}>
-                <LineChart data={predictionData}>
+                <LineChart data={filteredPredictionData}>
                   <CartesianGrid strokeDasharray="3 3" />
                   <XAxis dataKey="datetime" />
                   <YAxis />
@@ -415,7 +465,7 @@ const PredictionMonitor: React.FC = () => {
       <Card title="预测结果明细" bordered={false}>
         <Table
           columns={columns}
-          dataSource={predictionData}
+          dataSource={filteredPredictionData}
           rowKey="id"
           loading={loading}
           pagination={{

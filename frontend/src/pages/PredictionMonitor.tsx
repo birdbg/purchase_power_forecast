@@ -1,10 +1,10 @@
 import React, { useState, useEffect } from 'react'
 import {
   Card, Row, Col, DatePicker, Select, Table, Button, Statistic,
-  Typography, Space, Tag, message, Modal, Form, InputNumber, Switch, Alert
+  Typography, Space, Tag, message, Alert, Empty
 } from 'antd'
 import { DownloadOutlined, CheckCircleOutlined, WarningOutlined, CloseCircleOutlined, PlayCircleOutlined, ReloadOutlined } from '@ant-design/icons'
-import { getPredictionResults, runPrediction, exportPredictionResults, singlePredict } from '@/api/predictApi'
+import { getPredictionResults, runPrediction, exportPredictionResults } from '@/api/predictApi'
 import { getActiveDatasets, type DatasetInfo } from '@/api/datasetApi'
 import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend,
@@ -12,23 +12,11 @@ import {
 } from 'recharts'
 import type { TableProps } from 'antd'
 import dayjs from 'dayjs'
+import type { PredictionRecord } from '@/types/predict'
 
 const { RangePicker } = DatePicker
 const { Option } = Select
 const { Title, Text } = Typography
-
-// 定义类型
-interface PredictionRecord {
-  id: string
-  date: string
-  time: string
-  predict: number
-  actual: number
-  error: number
-  errorRate: number
-  modelVersion: string
-  status: 'normal' | 'warning' | 'error'
-}
 
 interface ModelVersionError {
   version: string
@@ -39,87 +27,9 @@ interface ModelVersionError {
 const statusConfig = {
   normal: { color: '#52c41a', icon: <CheckCircleOutlined />, text: '正常' },
   warning: { color: '#faad14', icon: <WarningOutlined />, text: '预警' },
-  error: { color: '#ff4d4f', icon: <CloseCircleOutlined />, text: '异常' }
+  error: { color: '#ff4d4f', icon: <CloseCircleOutlined />, text: '异常' },
+  abnormal: { color: '#ff4d4f', icon: <CloseCircleOutlined />, text: '异常' }
 }
-
-// 模拟最近30天预测实际数据
-const generatePredictionTrendData = () => {
-  const data = []
-  for (let i = 29; i >= 0; i--) {
-    const date = dayjs().subtract(i, 'day').format('MM-DD')
-    const base = 1200 + Math.random() * 300
-    const predict = base
-    const actual = base + (Math.random() - 0.5) * 150
-    data.push({
-      date,
-      predict,
-      actual
-    })
-  }
-  return data
-}
-
-// 模拟每日误差率数据
-const generateErrorTrendData = () => {
-  const data = []
-  for (let i = 29; i >= 0; i--) {
-    const date = dayjs().subtract(i, 'day').format('MM-DD')
-    const errorRate = 2 + Math.random() * 11
-    data.push({
-      date,
-      errorRate
-    })
-  }
-  return data
-}
-
-// 模型版本误差对比数据
-const modelVersionErrorData: ModelVersionError[] = [
-  { version: 'v1.2.0', avgErrorRate: 4.2 },
-  { version: 'v1.1.1', avgErrorRate: 4.8 },
-  { version: 'v1.1.0', avgErrorRate: 5.6 },
-  { version: 'v1.0.0', avgErrorRate: 7.3 }
-]
-
-// 生成明细表格数据
-const generateTableData = (): PredictionRecord[] => {
-  const data: PredictionRecord[] = []
-  const versions = ['v1.2.0', 'v1.1.1', 'v1.1.0', 'v1.0.0']
-  
-  for (let i = 29; i >= 0; i--) {
-    const date = dayjs().subtract(i, 'day').format('YYYY-MM-DD')
-    // 每天生成3条记录，分别是0点，12点，18点
-    for (const time of ['00:00', '12:00', '18:00']) {
-      const base = 1200 + Math.random() * 300
-      const predict = base
-      const actual = base + (Math.random() - 0.5) * 150
-      const error = predict - actual
-      const errorRate = Math.abs(error / actual * 100)
-      
-      let status: 'normal' | 'warning' | 'error' = 'normal'
-      if (errorRate >= 5 && errorRate < 10) status = 'warning'
-      if (errorRate >= 10) status = 'error'
-      
-      data.push({
-        id: `${date}-${time}`,
-        date,
-        time,
-        predict: Math.round(predict * 10) / 10,
-        actual: Math.round(actual * 10) / 10,
-        error: Math.round(error * 10) / 10,
-        errorRate: Math.round(errorRate * 100) / 100,
-        modelVersion: versions[Math.floor(Math.random() * versions.length)],
-        status
-      })
-    }
-  }
-  return data
-}
-
-// 模拟数据
-const predictionTrendData = generatePredictionTrendData()
-const errorTrendData = generateErrorTrendData()
-const tableData = generateTableData()
 
 const PredictionMonitor: React.FC = () => {
   const [dateRange, setDateRange] = useState<[dayjs.Dayjs | null, dayjs.Dayjs | null]>([
@@ -129,13 +39,9 @@ const PredictionMonitor: React.FC = () => {
   const [modelVersion, setModelVersion] = useState<string>('all')
   const [errorStatus, setErrorStatus] = useState<string>('all')
   const [loading, setLoading] = useState(false)
-  const [predictionData, setPredictionData] = useState<PredictionRecord[]>(tableData)
+  const [predictionData, setPredictionData] = useState<PredictionRecord[]>([])
   const [batchPredictLoading, setBatchPredictLoading] = useState(false)
-  const [singlePredictModalVisible, setSinglePredictModalVisible] = useState(false)
-  const [singlePredictResult, setSinglePredictResult] = useState<any>(null)
-  const [form] = Form.useForm()
   const [activePredictionDataset, setActivePredictionDataset] = useState<DatasetInfo | null>(null)
-  const [predictLoading, setPredictLoading] = useState(false)
   
   const loadActiveDataset = async () => {
     try {
@@ -149,8 +55,8 @@ const PredictionMonitor: React.FC = () => {
   const loadPredictions = async () => {
     setLoading(true)
     try {
-      const data = await getPredictionResults()
-      setPredictionData(data.length ? data : [])
+      const result = await getPredictionResults()
+      setPredictionData(Array.isArray(result) ? result : (result.records || []))
     } catch (error: any) {
       message.error(error?.response?.data?.detail || error.message || '加载预测结果失败')
       setPredictionData([])
@@ -171,7 +77,7 @@ const PredictionMonitor: React.FC = () => {
       dataIndex: 'date',
       key: 'date',
       width: 120,
-      sorter: (a, b) => dayjs(a.date).valueOf() - dayjs(b.date).valueOf()
+      sorter: (a: any, b: any) => dayjs(a.date).valueOf() - dayjs(b.date).valueOf()
     },
     {
       title: '预测时间',
@@ -210,11 +116,11 @@ const PredictionMonitor: React.FC = () => {
       width: 120,
       align: 'right',
       render: (val) => (
-        <span style={{ color: val < 5 ? '#52c41a' : val < 10 ? '#faad14' : '#ff4d4f', fontWeight: 500 }}>
+        <span style={{ color: (val ?? 0) < 5 ? '#52c41a' : (val ?? 0) < 10 ? '#faad14' : '#ff4d4f', fontWeight: 500 }}>
           {val}%
         </span>
       ),
-      sorter: (a, b) => a.errorRate - b.errorRate
+      sorter: (a: any, b: any) => (a.errorRate ?? 0) - (b.errorRate ?? 0)
     },
     {
       title: '模型版本',
@@ -222,29 +128,25 @@ const PredictionMonitor: React.FC = () => {
       key: 'modelVersion',
       width: 120,
       render: (version) => <Tag color="blue">{version}</Tag>,
-      filters: [
-        { text: 'v1.2.0', value: 'v1.2.0' },
-        { text: 'v1.1.1', value: 'v1.1.1' },
-        { text: 'v1.1.0', value: 'v1.1.0' },
-        { text: 'v1.0.0', value: 'v1.0.0' }
-      ],
-      onFilter: (value, record) => record.modelVersion === value
+      filters: Array.from(new Set(predictionData.map((item: any) => item.modelVersion))).map(v => ({ text: v, value: v })),
+      onFilter: (value, record: any) => record.modelVersion === value
     },
     {
       title: '状态',
       dataIndex: 'status',
       key: 'status',
       width: 100,
-      render: (status: PredictionRecord['status']) => {
-        const config = statusConfig[status]
+      render: (status: keyof typeof statusConfig) => {
+        const config = statusConfig[status] || statusConfig.error
         return <Tag icon={config.icon} color={config.color}>{config.text}</Tag>
       },
       filters: [
         { text: '正常', value: 'normal' },
         { text: '预警', value: 'warning' },
-        { text: '异常', value: 'error' }
+        { text: '异常', value: 'error' },
+        { text: '异常', value: 'abnormal' }
       ],
-      onFilter: (value, record) => record.status === value
+      onFilter: (value, record: any) => record.status === value
     }
   ]
 
@@ -279,10 +181,25 @@ const PredictionMonitor: React.FC = () => {
   }
 
   // 计算指标
-  const last7DaysAvgError = 3.8
-  const last30DaysAvgError = 4.2
-  const maxDayError = 12.3
-  const errorCount: number = 3
+  const last7DaysAvgError = predictionData.length > 0 
+    ? predictionData.slice(-7).reduce((sum, item) => sum + (item.errorRate ?? 0), 0) / Math.min(7, predictionData.length)
+    : 0
+  const last30DaysAvgError = predictionData.length > 0
+    ? predictionData.reduce((sum, item) => sum + (item.errorRate ?? 0), 0) / predictionData.length
+    : 0
+  const maxDayError = predictionData.length > 0
+    ? Math.max(...predictionData.map(item => item.errorRate ?? 0))
+    : 0
+  const errorCount: number = predictionData.filter(item => (item.errorRate ?? 0) >= 10).length
+
+  // 生成模型版本误差对比数据
+  const modelVersionErrorData: ModelVersionError[] = Array.from(
+    new Set(predictionData.map(item => item.modelVersion))
+  ).map(version => {
+    const versionData = predictionData.filter(item => item.modelVersion === version)
+    const avgErrorRate = versionData.reduce((sum, item) => sum + (item.errorRate ?? 0), 0) / versionData.length
+    return { version, avgErrorRate }
+  })
 
   return (
     <div>
@@ -336,10 +253,6 @@ const PredictionMonitor: React.FC = () => {
               placeholder="请选择模型版本"
             >
               <Option value="all">全部版本</Option>
-              <Option value="v1.2.0">v1.2.0</Option>
-              <Option value="v1.1.1">v1.1.1</Option>
-              <Option value="v1.1.0">v1.1.0</Option>
-              <Option value="v1.0.0">v1.0.0</Option>
             </Select>
           </Col>
           <Col xs={24} sm={8}>
@@ -407,74 +320,97 @@ const PredictionMonitor: React.FC = () => {
 
       {/* 主图表：预测vs实际 */}
       <Card title="预测外购电 vs 实际外购电" bordered={false} style={{ marginBottom: 24 }}>
-        <ResponsiveContainer width="100%" height={400}>
-          <LineChart data={predictionTrendData}>
-            <CartesianGrid strokeDasharray="3 3" />
-            <XAxis dataKey="date" />
-            <YAxis />
-            <Tooltip formatter={(val) => [`${Number(val).toFixed(1)} MWh`, '']} />
-            <Legend />
-            <Line type="monotone" dataKey="actual" stroke="#1890ff" name="实际外购电" strokeWidth={2} dot={false} />
-            <Line type="monotone" dataKey="predict" stroke="#52c41a" name="预测外购电" strokeWidth={2} dot={false} />
-          </LineChart>
-        </ResponsiveContainer>
+        {predictionData.length > 0 ? (
+          <ResponsiveContainer width="100%" height={400}>
+            <LineChart data={predictionData}>
+              <CartesianGrid strokeDasharray="3 3" />
+              <XAxis dataKey="date" />
+              <YAxis />
+              <Tooltip formatter={(val) => [`${Number(val).toFixed(1)} MWh`, '']} />
+              <Legend />
+              <Line type="monotone" dataKey="actual" stroke="#1890ff" name="实际外购电" strokeWidth={2} dot={false} />
+              <Line type="monotone" dataKey="predict" stroke="#52c41a" name="预测外购电" strokeWidth={2} dot={false} />
+            </LineChart>
+          </ResponsiveContainer>
+        ) : (
+          <div style={{ padding: '80px 0', textAlign: 'center' }}>
+            <Empty description="暂无预测数据" />
+          </div>
+        )}
       </Card>
 
       {/* 辅助图表区域 */}
       <Row gutter={[16, 16]} style={{ marginBottom: 24 }}>
         <Col xs={24} lg={12}>
           <Card title="每日误差率趋势" bordered={false}>
-            <ResponsiveContainer width="100%" height={300}>
-              <LineChart data={errorTrendData}>
-                <CartesianGrid strokeDasharray="3 3" />
-                <XAxis dataKey="date" />
-                <YAxis />
-                <Tooltip formatter={(val) => [`${Number(val).toFixed(2)}%`, '误差率']} />
-                <Legend />
-                <Line 
-                  type="monotone" 
-                  dataKey="errorRate" 
-                  name="误差率" 
-                  strokeWidth={2}
-                  dot={{
-                    r: 3,
-                    fill: '#ff4d4f'
-                  }}
-                />
-              </LineChart>
-            </ResponsiveContainer>
+            {predictionData.length > 0 ? (
+              <ResponsiveContainer width="100%" height={300}>
+                <LineChart data={predictionData}>
+                  <CartesianGrid strokeDasharray="3 3" />
+                  <XAxis dataKey="date" />
+                  <YAxis />
+                  <Tooltip formatter={(val) => [`${Number(val).toFixed(2)}%`, '误差率']} />
+                  <Legend />
+                  <Line 
+                    type="monotone" 
+                    dataKey="errorRate" 
+                    name="误差率" 
+                    strokeWidth={2}
+                    dot={{
+                      r: 3,
+                      fill: '#ff4d4f'
+                    }}
+                  />
+                </LineChart>
+              </ResponsiveContainer>
+            ) : (
+              <div style={{ padding: '60px 0', textAlign: 'center' }}>
+                <Empty description="暂无预测数据" />
+              </div>
+            )}
           </Card>
         </Col>
         <Col xs={24} lg={12}>
           <Card title="模型版本误差对比" bordered={false}>
-            <ResponsiveContainer width="100%" height={300}>
-              <BarChart data={modelVersionErrorData}>
-                <CartesianGrid strokeDasharray="3 3" />
-                <XAxis dataKey="version" />
-                <YAxis />
-                <Tooltip formatter={(val) => [`${Number(val).toFixed(2)}%`, '平均误差率']} />
-                <Bar dataKey="avgErrorRate" name="平均误差率">
-                  {modelVersionErrorData.map((entry, index) => (
-                    <Cell 
-                      key={`cell-${index}`} 
-                      fill={entry.avgErrorRate < 5 ? '#52c41a' : entry.avgErrorRate < 10 ? '#faad14' : '#ff4d4f'} 
-                    />
-                  ))}
-                </Bar>
-              </BarChart>
-            </ResponsiveContainer>
+            {modelVersionErrorData.length > 0 ? (
+              <ResponsiveContainer width="100%" height={300}>
+                <BarChart data={modelVersionErrorData}>
+                  <CartesianGrid strokeDasharray="3 3" />
+                  <XAxis dataKey="version" />
+                  <YAxis />
+                  <Tooltip formatter={(val) => [`${Number(val).toFixed(2)}%`, '平均误差率']} />
+                  <Bar dataKey="avgErrorRate" name="平均误差率">
+                    {modelVersionErrorData.map((entry, index) => (
+                      <Cell
+                        key={`cell-${index}`}
+                        fill={entry.avgErrorRate < 5 ? '#52c41a' : entry.avgErrorRate < 10 ? '#faad14' : '#ff4d4f'}
+                      />
+                    ))}
+                  </Bar>
+                </BarChart>
+              </ResponsiveContainer>
+            ) : (
+              <div style={{ padding: '60px 0', textAlign: 'center' }}>
+                <Empty description="暂无模型版本数据" />
+              </div>
+            )}
           </Card>
         </Col>
       </Row>
 
-      {/* 明细表格 */}
+      {/* 预测结果表格 */}
       <Card title="预测结果明细" bordered={false}>
         <Table
           columns={columns}
-          dataSource={tableData}
+          dataSource={predictionData}
           rowKey="id"
-          pagination={{ pageSize: 20 }}
-          scroll={{ x: 1300 }}
+          loading={loading}
+          pagination={{
+            pageSize: 20,
+            showSizeChanger: true,
+            showTotal: (total) => `共 ${total} 条记录`,
+          }}
+          bordered={false}
         />
       </Card>
     </div>

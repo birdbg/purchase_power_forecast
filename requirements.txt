@@ -11,3 +11,4 @@ openpyxl
 matplotlib
 pytest
 optuna
+python-multipart

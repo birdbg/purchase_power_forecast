@@ -1,10 +1,11 @@
 import React, { useState, useEffect } from 'react'
 import {
   Card, Row, Col, DatePicker, Select, Table, Button, Statistic,
-  Typography, Space, Tag, message, Modal, Form, InputNumber, Switch
+  Typography, Space, Tag, message, Modal, Form, InputNumber, Switch, Alert
 } from 'antd'
-import { DownloadOutlined, CheckCircleOutlined, WarningOutlined, CloseCircleOutlined, PlayCircleOutlined } from '@ant-design/icons'
+import { DownloadOutlined, CheckCircleOutlined, WarningOutlined, CloseCircleOutlined, PlayCircleOutlined, ReloadOutlined } from '@ant-design/icons'
 import { getPredictionResults, runPrediction, exportPredictionResults, singlePredict } from '@/api/predictApi'
+import { getActiveDatasets, type DatasetInfo } from '@/api/datasetApi'
 import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend,
   BarChart, Bar, ResponsiveContainer, Cell
@@ -133,6 +134,35 @@ const PredictionMonitor: React.FC = () => {
   const [singlePredictModalVisible, setSinglePredictModalVisible] = useState(false)
   const [singlePredictResult, setSinglePredictResult] = useState<any>(null)
   const [form] = Form.useForm()
+  const [activePredictionDataset, setActivePredictionDataset] = useState<DatasetInfo | null>(null)
+  const [predictLoading, setPredictLoading] = useState(false)
+  
+  const loadActiveDataset = async () => {
+    try {
+      const active = await getActiveDatasets()
+      setActivePredictionDataset(active.prediction)
+    } catch (error) {
+      console.error(error)
+    }
+  }
+  
+  const loadPredictions = async () => {
+    setLoading(true)
+    try {
+      const data = await getPredictionResults()
+      setPredictionData(data.length ? data : [])
+    } catch (error: any) {
+      message.error(error?.response?.data?.detail || error.message || '加载预测结果失败')
+      setPredictionData([])
+    } finally {
+      setLoading(false)
+    }
+  }
+  
+  useEffect(() => {
+    loadActiveDataset()
+    loadPredictions()
+  }, [])
 
   // 表格列配置
   const columns: TableProps<PredictionRecord>['columns'] = [
@@ -218,9 +248,34 @@ const PredictionMonitor: React.FC = () => {
     }
   ]
 
-  // 导出CSV（mock实现）
-  const handleExport = () => {
-    message.success('CSV导出成功，文件已下载')
+  const handleBatchPredict = async () => {
+    if (!activePredictionDataset) {
+      message.warning('请先在数据管理页面上传并激活预测输入数据集。')
+      return
+    }
+    setBatchPredictLoading(true)
+    try {
+      message.loading('批量预测执行中，请稍候...', 0)
+      const result = await runPrediction({ datasetId: activePredictionDataset.datasetId } as any)
+      message.destroy()
+      message.success('批量预测完成，预测结果已生成')
+      await loadPredictions()
+    } catch (error: any) {
+      message.destroy()
+      message.error(error?.response?.data?.detail || error.message || '批量预测失败')
+    } finally {
+      setBatchPredictLoading(false)
+    }
+  }
+
+  // 导出CSV
+  const handleExport = async () => {
+    try {
+      await exportPredictionResults()
+      message.success('CSV导出成功，文件已下载')
+    } catch (error: any) {
+      message.error(error?.response?.data?.detail || error.message || '导出失败')
+    }
   }
 
   // 计算指标
@@ -233,10 +288,33 @@ const PredictionMonitor: React.FC = () => {
     <div>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24 }}>
         <Title level={4} style={{ margin: 0 }}>外购电预测监控</Title>
-        <Button type="primary" icon={<DownloadOutlined />} onClick={handleExport}>
-          导出CSV
-        </Button>
+        <Space>
+          <Button
+            type="primary"
+            icon={<PlayCircleOutlined />}
+            onClick={handleBatchPredict}
+            loading={batchPredictLoading}
+            disabled={!activePredictionDataset}
+          >
+            执行批量预测
+          </Button>
+          <Button icon={<DownloadOutlined />} onClick={handleExport}>
+            导出CSV
+          </Button>
+          <Button icon={<ReloadOutlined />} onClick={loadPredictions} loading={loading}>
+            刷新
+          </Button>
+        </Space>
       </div>
+
+      {!activePredictionDataset && (
+        <Alert
+          message="请先在数据管理页面上传并激活预测输入数据集，才能执行批量预测。"
+          type="warning"
+          showIcon
+          style={{ marginBottom: 24 }}
+        />
+      )}
 
       {/* 筛选区域 */}
       <Card bordered={false} style={{ marginBottom: 24 }}>

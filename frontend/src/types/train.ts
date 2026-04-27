@@ -34,6 +34,7 @@ export interface CreateTrainJobPayload {
   trainDataEnd: string
   params: Record<string, any>
   remark?: string
+  datasetId?: string
 }
 
 // 训练日志类型

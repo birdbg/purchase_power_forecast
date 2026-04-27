@@ -11,6 +11,7 @@ import {
 } from '@ant-design/icons'
 import type { TableProps } from 'antd'
 import dayjs from 'dayjs'
+import { getActiveDatasets, getDatasets, type DatasetInfo } from '@/api/datasetApi'
 
 const { Title, Text } = Typography
 const { RangePicker } = DatePicker
@@ -43,7 +44,24 @@ const TrainingJobs: React.FC = () => {
   const [modalVisible, setModalVisible] = useState(false)
   const [drawerVisible, setDrawerVisible] = useState(false)
   const [currentJob, setCurrentJob] = useState<TrainingJob | null>(null)
+  const [trainingDatasets, setTrainingDatasets] = useState<DatasetInfo[]>([])
+  const [activeTrainingDataset, setActiveTrainingDataset] = useState<DatasetInfo | null>(null)
   const [form] = Form.useForm()
+
+  const loadDatasets = async () => {
+    try {
+      const [datasets, active] = await Promise.all([getDatasets(), getActiveDatasets()])
+      const training = datasets.filter(dataset => dataset.datasetType === 'training')
+      setTrainingDatasets(training)
+      setActiveTrainingDataset(active.training)
+      if (active.training) {
+        form.setFieldsValue({ datasetId: active.training.datasetId })
+      }
+    } catch (error) {
+      console.error(error)
+      message.error('加载训练数据集失败')
+    }
+  }
 
   // 加载任务列表
   const loadJobs = async () => {
@@ -89,9 +107,17 @@ const TrainingJobs: React.FC = () => {
     loadJobs()
   }, [algorithmFilter, statusFilter])
 
+  useEffect(() => {
+    loadDatasets()
+  }, [])
+
   // 新建训练任务
   const handleCreateJob = async (values: any) => {
     if (submitLoading) return
+    if (!values.datasetId && !activeTrainingDataset) {
+      message.warning('请先在数据管理页面上传并激活训练数据集。')
+      return
+    }
     setSubmitLoading(true)
     try {
       message.loading('模型训练中，请勿重复提交', 0)
@@ -102,7 +128,8 @@ const TrainingJobs: React.FC = () => {
         trainDataStart: values.dataRange[0].format('YYYY-MM-DD'),
         trainDataEnd: values.dataRange[1].format('YYYY-MM-DD'),
         params: {},
-        remark: values.remark
+        remark: values.remark,
+        datasetId: values.datasetId || activeTrainingDataset?.datasetId
       }
       
       const result = await createTrainingJob(params)
@@ -311,7 +338,7 @@ const TrainingJobs: React.FC = () => {
       <div style={{ marginBottom: 24, display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 16 }}>
         <Title level={4} style={{ margin: 0 }}>训练任务管理</Title>
         <Space>
-          <Button type="primary" icon={<PlusOutlined />} onClick={() => setModalVisible(true)} disabled={submitLoading}>
+          <Button type="primary" icon={<PlusOutlined />} onClick={() => { loadDatasets(); setModalVisible(true) }} disabled={submitLoading}>
             新建训练任务
           </Button>
           <Button icon={<ReloadOutlined />} onClick={loadJobs} loading={loading}>
@@ -402,6 +429,28 @@ const TrainingJobs: React.FC = () => {
           >
             <RangePicker style={{ width: '100%' }} />
           </Form.Item>
+
+          <Form.Item
+            name="datasetId"
+            label="训练数据集"
+            rules={[{ required: true, message: '请选择训练数据集' }]}
+          >
+            <Select placeholder="请选择训练数据集" loading={loading}>
+              {trainingDatasets.map(dataset => (
+                <Option key={dataset.datasetId} value={dataset.datasetId}>
+                  {dataset.isActive ? '【当前激活】' : ''}{dataset.fileName} / {dataset.rowCount} 行 / {dataset.datasetId}
+                </Option>
+              ))}
+            </Select>
+          </Form.Item>
+          {!activeTrainingDataset && (
+            <Alert
+              message="请先在数据管理页面上传并激活训练数据集。"
+              type="warning"
+              showIcon
+              style={{ marginBottom: 16 }}
+            />
+          )}
 
           <Form.Item
             name="autoTune"

@@ -35,6 +35,7 @@ def train_model(
     data_config_path: str = "config/data_config.yaml",
     model_config_path: str = "config/model_config.yaml",
     model_name: str | None = None,
+    extra_metadata: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Train a purchased power forecasting model and register it as candidate.
 
@@ -175,6 +176,8 @@ def train_model(
         "data_path": str(data_path),
         "status": model_config.get("registry", {}).get("candidate_status", "candidate"),
     }
+    if extra_metadata:
+        metadata.update(extra_metadata)
 
     # Save metadata JSON
     metadata_path = model_dir / "metadata.json"

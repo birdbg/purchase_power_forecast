@@ -18,10 +18,11 @@ from pathlib import Path
 from typing import Any, Optional, List, Dict
 from uuid import uuid4
 import subprocess
+import shutil
 
 import joblib
 import pandas as pd
-from fastapi import FastAPI, HTTPException, status, Query
+from fastapi import FastAPI, HTTPException, status, Query, UploadFile, File, Form
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
@@ -105,6 +106,8 @@ class DashboardSummaryOutput(BaseModel):
     abnormalCount: int
     totalModelVersions: int
     totalPredictions: int
+    hasProductionModel: bool = True
+    message: Optional[str] = None
 
 
 class ModelVersion(BaseModel):
@@ -124,6 +127,9 @@ class ModelVersion(BaseModel):
     features: List[str]
     params: Dict[str, Any]
     remark: Optional[str] = None
+    datasetId: Optional[str] = None
+    datasetFilePath: Optional[str] = None
+    rowCount: Optional[int] = None
 
 
 class EvaluationSample(BaseModel):
@@ -178,6 +184,9 @@ class TrainingJob(BaseModel):
     trainDataRange: List[str]
     errorMessage: Optional[str] = None
     remark: Optional[str] = None
+    datasetId: Optional[str] = None
+    datasetFilePath: Optional[str] = None
+    rowCount: Optional[int] = None
 
 
 class CreateTrainingJobInput(BaseModel):
@@ -188,6 +197,22 @@ class CreateTrainingJobInput(BaseModel):
     trainDataEnd: Optional[str] = Field(default="2024-12-31")
     params: Optional[Dict[str, Any]] = Field(default_factory=dict)
     remark: Optional[str] = None
+    datasetId: Optional[str] = None
+
+
+class RepairDatasetInput(BaseModel):
+    """Schema for repairing dataset input."""
+    actions: List[str]
+
+
+class ActivateDatasetInput(BaseModel):
+    """Schema for activating dataset input."""
+    datasetType: str = Field(description="training or prediction")
+
+
+class RunPredictionInput(BaseModel):
+    """Schema for running batch prediction input."""
+    datasetId: Optional[str] = None
 
 
 class CreateTrainingJobOutput(BaseModel):
@@ -220,6 +245,19 @@ _registry: ModelRegistry | None = None
 # Global training jobs storage
 TRAINING_JOBS = []
 TRAINING_LOGS = {}
+DATASETS = []
+ACTIVE_TRAINING_DATASET_ID = None
+ACTIVE_PREDICTION_DATASET_ID = None
+
+REQUIRED_DATASET_FIELDS = [
+    "date", "purchase_power", "total_power", "self_power", "steel_output",
+    "rolling_output", "temperature", "is_holiday", "is_maintenance"
+]
+NUMERIC_DATASET_FIELDS = [
+    "purchase_power", "total_power", "self_power", "steel_output", "rolling_output",
+    "temperature", "purchase_lag_1", "purchase_lag_7", "purchase_rolling_7"
+]
+LAG_DATASET_FIELDS = ["purchase_lag_1", "purchase_lag_7", "purchase_rolling_7"]
 
 
 def get_registry() -> ModelRegistry:
@@ -228,6 +266,187 @@ def get_registry() -> ModelRegistry:
     if _registry is None:
         _registry = ModelRegistry(model_name="purchase_power", store_dir="model_store")
     return _registry
+
+
+def _get_dataset(dataset_id: str) -> dict[str, Any]:
+    """Return a dataset by ID or raise 404."""
+    dataset = next((item for item in DATASETS if item["datasetId"] == dataset_id), None)
+    if not dataset:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Dataset {dataset_id} not found"
+        )
+    return dataset
+
+
+def _get_active_dataset(dataset_type: str) -> dict[str, Any] | None:
+    """Return currently active dataset for a dataset type."""
+    active_id = ACTIVE_TRAINING_DATASET_ID if dataset_type == "training" else ACTIVE_PREDICTION_DATASET_ID
+    if not active_id:
+        return None
+    return next((item for item in DATASETS if item["datasetId"] == active_id), None)
+
+
+def _read_dataset_csv(dataset: dict[str, Any]) -> pd.DataFrame:
+    """Read dataset CSV from its current file path."""
+    file_path = Path(dataset.get("repairedFilePath") or dataset["filePath"])
+    if not file_path.exists():
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Dataset file not found: {file_path}"
+        )
+    return pd.read_csv(file_path)
+
+
+def _quality_check_dataframe(df: pd.DataFrame) -> dict[str, Any]:
+    """Run quality checks on dataset DataFrame."""
+    columns = set(df.columns)
+    missing_required = [field for field in REQUIRED_DATASET_FIELDS if field not in columns]
+    date_missing_count = int(df["date"].isna().sum()) if "date" in df.columns else len(df)
+    purchase_missing_count = int(df["purchase_power"].isna().sum()) if "purchase_power" in df.columns else len(df)
+
+    negative_count = 0
+    for field in NUMERIC_DATASET_FIELDS:
+        if field in df.columns:
+            values = pd.to_numeric(df[field], errors="coerce")
+            negative_count += int((values < 0).sum())
+
+    duplicate_count = int(df.duplicated(subset=["date"], keep="last").sum()) if "date" in df.columns else 0
+    lag_missing_count = 0
+    for field in LAG_DATASET_FIELDS:
+        if field not in df.columns:
+            lag_missing_count += len(df)
+        else:
+            lag_missing_count += int(df[field].isna().sum())
+
+    row_count_warning = 1 if len(df) < 30 else 0
+    date_range = "-"
+    if "date" in df.columns:
+        dates = pd.to_datetime(df["date"], errors="coerce").dropna()
+        if len(dates) > 0:
+            date_range = f"{dates.min().date()} ~ {dates.max().date()}"
+
+    results = [
+        {
+            "key": "required-fields",
+            "checkItem": "必填字段存在检查",
+            "result": "fail" if missing_required else "pass",
+            "problemCount": len(missing_required),
+            "suggestion": f"缺少字段：{', '.join(missing_required)}" if missing_required else "无需处理",
+            "fixable": False,
+            "fixAction": None,
+        },
+        {
+            "key": "date-missing",
+            "checkItem": "date 缺失检查",
+            "result": "fail" if date_missing_count else "pass",
+            "problemCount": date_missing_count,
+            "suggestion": "补充 date 或删除对应记录" if date_missing_count else "无需处理",
+            "fixable": False,
+            "fixAction": None,
+        },
+        {
+            "key": "purchase-power-missing",
+            "checkItem": "purchase_power 缺失检查",
+            "result": "fail" if purchase_missing_count else "pass",
+            "problemCount": purchase_missing_count,
+            "suggestion": "补充外购电量或删除对应记录" if purchase_missing_count else "无需处理",
+            "fixable": False,
+            "fixAction": None,
+        },
+        {
+            "key": "negative-values",
+            "checkItem": "数值字段负数检查",
+            "result": "fail" if negative_count else "pass",
+            "problemCount": negative_count,
+            "suggestion": "检查并修正负数异常值" if negative_count else "无需处理",
+            "fixable": False,
+            "fixAction": None,
+        },
+        {
+            "key": "duplicate-date",
+            "checkItem": "日期重复检查",
+            "result": "warning" if duplicate_count else "pass",
+            "problemCount": duplicate_count,
+            "suggestion": "删除重复日期记录" if duplicate_count else "无需处理",
+            "fixable": duplicate_count > 0,
+            "fixAction": "drop_duplicate_dates",
+        },
+        {
+            "key": "lag-missing",
+            "checkItem": "lag 字段缺失检查",
+            "result": "warning" if lag_missing_count else "pass",
+            "problemCount": lag_missing_count,
+            "suggestion": "生成 purchase_lag_1、purchase_lag_7、purchase_rolling_7" if lag_missing_count else "无需处理",
+            "fixable": "purchase_power" in df.columns and lag_missing_count > 0,
+            "fixAction": "generate_lag",
+        },
+        {
+            "key": "row-count",
+            "checkItem": "数据行数检查",
+            "result": "warning" if row_count_warning else "pass",
+            "problemCount": row_count_warning,
+            "suggestion": "训练数据少于 30 行，建议补充更多历史数据" if row_count_warning else "无需处理",
+            "fixable": False,
+            "fixAction": None,
+        },
+    ]
+    missing_count = date_missing_count + purchase_missing_count + lag_missing_count
+    abnormal_count = negative_count + duplicate_count
+    total_problems = sum(item["problemCount"] for item in results)
+    return {
+        "totalProblems": total_problems,
+        "results": results,
+        "summary": {
+            "rowCount": len(df),
+            "dateRange": date_range,
+            "missingCount": missing_count,
+            "abnormalCount": abnormal_count,
+        },
+    }
+
+
+def _set_active_dataset(dataset: dict[str, Any], dataset_type: str) -> dict[str, Any]:
+    """Set active dataset for training or prediction."""
+    global ACTIVE_TRAINING_DATASET_ID, ACTIVE_PREDICTION_DATASET_ID
+    if dataset_type not in {"training", "prediction"}:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="datasetType must be training or prediction")
+    if dataset["datasetType"] != dataset_type:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="datasetType does not match dataset")
+    for item in DATASETS:
+        if item["datasetType"] == dataset_type:
+            item["isActive"] = False
+    dataset["isActive"] = True
+    if dataset_type == "training":
+        ACTIVE_TRAINING_DATASET_ID = dataset["datasetId"]
+    else:
+        ACTIVE_PREDICTION_DATASET_ID = dataset["datasetId"]
+    return dataset
+
+
+def _model_response_from_manifest(v: dict[str, Any]) -> dict[str, Any]:
+    """Convert registry manifest to API model response."""
+    metrics = v.get("metrics", {})
+    return {
+        "version": v["model_id"],
+        "modelName": "purchase_power",
+        "algorithm": v.get("algorithm", "unknown"),
+        "status": v["status"],
+        "trainDataStart": v.get("train_data_start", "-"),
+        "trainDataEnd": v.get("train_data_end", "-"),
+        "mae": metrics.get("mae", 0.0),
+        "mape": metrics.get("mape", 0.0),
+        "rmse": metrics.get("rmse", 0.0),
+        "r2": metrics.get("r2", 0.0),
+        "createdAt": v.get("registered_at", ""),
+        "publishedAt": v.get("promoted_at"),
+        "features": v.get("feature_list", []),
+        "params": v.get("params", {}),
+        "remark": v.get("remark", ""),
+        "datasetId": v.get("datasetId"),
+        "datasetFilePath": v.get("datasetFilePath"),
+        "rowCount": v.get("rowCount"),
+    }
 
 
 def get_production_model() -> dict[str, Any]:
@@ -259,6 +478,164 @@ def get_production_model() -> dict[str, Any]:
         "model": model,
         "model_info": model_info,
         "model_package": model_package,
+    }
+
+
+# ==================== Dataset Endpoints ====================
+
+@app.post("/api/datasets/upload", summary="Upload dataset file")
+async def upload_dataset(file: UploadFile = File(...), datasetType: str = Form(...)):
+    """Upload CSV dataset file for training or prediction."""
+    if not file.filename.endswith(".csv"):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="请上传 CSV 格式文件，Excel 请先转 CSV 或使用模板"
+        )
+    
+    if datasetType not in {"training", "prediction"}:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="datasetType must be training or prediction"
+        )
+    
+    upload_dir = Path("data/uploads")
+    upload_dir.mkdir(parents=True, exist_ok=True)
+    
+    timestamp = int(datetime.now().timestamp())
+    file_name = f"{datasetType}_{timestamp}_{file.filename}"
+    file_path = upload_dir / file_name
+    
+    with file_path.open("wb") as buffer:
+        shutil.copyfileobj(file.file, buffer)
+    
+    df = pd.read_csv(file_path)
+    row_count = len(df)
+    columns = list(df.columns)
+    
+    dataset_id = f"ds_{str(uuid4())[:8]}"
+    dataset = {
+        "datasetId": dataset_id,
+        "datasetType": datasetType,
+        "fileName": file.filename,
+        "filePath": str(file_path),
+        "repairedFilePath": None,
+        "rowCount": row_count,
+        "columns": columns,
+        "uploadedAt": datetime.now().isoformat(),
+        "qualityStatus": "unchecked",
+        "qualitySummary": {
+            "totalProblems": 0,
+            "missingCount": 0,
+            "abnormalCount": 0
+        },
+        "isActive": False
+    }
+    DATASETS.append(dataset)
+    return dataset
+
+
+@app.post("/api/datasets/{datasetId}/quality-check", summary="Run quality check on dataset")
+def run_dataset_quality_check(datasetId: str):
+    """Run quality check on uploaded dataset."""
+    dataset = _get_dataset(datasetId)
+    df = _read_dataset_csv(dataset)
+    
+    check_result = _quality_check_dataframe(df)
+    if check_result["totalProblems"] == 0:
+        quality_status = "passed"
+    elif any(item["result"] == "fail" for item in check_result["results"]):
+        quality_status = "failed"
+    else:
+        quality_status = "warning"
+    
+    dataset["qualityStatus"] = quality_status
+    dataset["qualitySummary"] = {
+        "totalProblems": check_result["totalProblems"],
+        "missingCount": check_result["summary"]["missingCount"],
+        "abnormalCount": check_result["summary"]["abnormalCount"]
+    }
+    
+    return {
+        "datasetId": datasetId,
+        "totalProblems": check_result["totalProblems"],
+        "results": check_result["results"],
+        "summary": check_result["summary"]
+    }
+
+
+@app.post("/api/datasets/{datasetId}/repair", summary="Repair dataset issues")
+def repair_dataset(datasetId: str, input: RepairDatasetInput):
+    """Repair dataset issues with specified actions."""
+    dataset = _get_dataset(datasetId)
+    df = _read_dataset_csv(dataset)
+    
+    for action in input.actions:
+        if action == "generate_lag":
+            if "purchase_power" not in df.columns:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="generate_lag 操作需要 purchase_power 字段"
+                )
+            df["purchase_lag_1"] = df["purchase_power"].shift(1)
+            df["purchase_lag_7"] = df["purchase_power"].shift(7)
+            df["purchase_rolling_7"] = df["purchase_power"].rolling(window=7, min_periods=1).mean()
+        elif action == "drop_duplicate_dates":
+            if "date" not in df.columns:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="drop_duplicate_dates 操作需要 date 字段"
+                )
+            df = df.drop_duplicates(subset=["date"], keep="last").reset_index(drop=True)
+        elif action == "fill_missing_maintenance":
+            if "is_maintenance" in df.columns:
+                df["is_maintenance"] = df["is_maintenance"].fillna(0).astype(int)
+        elif action == "fill_missing_holiday":
+            if "is_holiday" in df.columns:
+                df["is_holiday"] = df["is_holiday"].fillna(0).astype(int)
+        else:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"不支持的修复操作: {action}"
+            )
+    
+    processed_dir = Path("data/processed")
+    processed_dir.mkdir(parents=True, exist_ok=True)
+    repaired_file_name = f"{datasetId}_repaired.csv"
+    repaired_file_path = processed_dir / repaired_file_name
+    df.to_csv(repaired_file_path, index=False)
+    
+    dataset["repairedFilePath"] = str(repaired_file_path)
+    dataset["rowCount"] = len(df)
+    dataset["columns"] = list(df.columns)
+    
+    return {
+        "success": True,
+        "datasetId": datasetId,
+        "repairedFilePath": str(repaired_file_path),
+        "message": "数据修复完成"
+    }
+
+
+@app.post("/api/datasets/{datasetId}/activate", summary="Set dataset as active for training/prediction")
+def activate_dataset(datasetId: str, input: ActivateDatasetInput):
+    """Activate dataset for training or prediction usage."""
+    dataset = _get_dataset(datasetId)
+    updated_dataset = _set_active_dataset(dataset, input.datasetType)
+    return updated_dataset
+
+
+@app.get("/api/datasets", summary="List all datasets")
+def list_datasets():
+    """Get list of all uploaded datasets."""
+    return DATASETS
+
+
+@app.get("/api/datasets/active", summary="Get active datasets")
+def get_active_datasets():
+    """Get currently active training and prediction datasets."""
+    return {
+        "training": _get_active_dataset("training"),
+        "prediction": _get_active_dataset("prediction")
     }
 
 
@@ -470,6 +847,136 @@ def health_check() -> dict[str, str]:
     }
 
 
+@app.post("/api/datasets/upload")
+async def upload_dataset(
+    file: UploadFile = File(...),
+    datasetType: str = Form(...),
+) -> dict[str, Any]:
+    """Upload a CSV dataset and register it for training or prediction."""
+    if datasetType not in {"training", "prediction"}:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="datasetType must be training or prediction")
+    original_name = file.filename or "dataset.csv"
+    if not original_name.lower().endswith(".csv"):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="暂时只支持 CSV，请先转 CSV 或使用模板。")
+
+    upload_dir = Path("data/uploads")
+    upload_dir.mkdir(parents=True, exist_ok=True)
+    safe_name = Path(original_name).name.replace(" ", "_")
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    file_path = upload_dir / f"{datasetType}_{timestamp}_{safe_name}"
+    with open(file_path, "wb") as f:
+        shutil.copyfileobj(file.file, f)
+
+    try:
+        df = pd.read_csv(file_path)
+    except Exception as e:
+        file_path.unlink(missing_ok=True)
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"CSV 读取失败: {str(e)}")
+
+    dataset = {
+        "datasetId": f"ds_{uuid4().hex[:10]}",
+        "datasetType": datasetType,
+        "fileName": original_name,
+        "filePath": str(file_path),
+        "repairedFilePath": None,
+        "rowCount": int(len(df)),
+        "columns": list(df.columns),
+        "uploadedAt": datetime.now().isoformat(),
+        "qualityStatus": "unchecked",
+        "qualitySummary": {"totalProblems": 0, "missingCount": 0, "abnormalCount": 0},
+        "isActive": False,
+    }
+    DATASETS.append(dataset)
+    return dataset
+
+
+@app.get("/api/datasets")
+def list_datasets() -> list[dict[str, Any]]:
+    """List uploaded datasets."""
+    return DATASETS
+
+
+@app.get("/api/datasets/active")
+def get_active_datasets() -> dict[str, Any]:
+    """Get active training and prediction datasets."""
+    return {
+        "training": _get_active_dataset("training"),
+        "prediction": _get_active_dataset("prediction"),
+    }
+
+
+@app.post("/api/datasets/{dataset_id}/quality-check")
+def quality_check_dataset(dataset_id: str) -> dict[str, Any]:
+    """Run quality check for uploaded dataset."""
+    dataset = _get_dataset(dataset_id)
+    df = _read_dataset_csv(dataset)
+    quality = _quality_check_dataframe(df)
+    total_problems = quality["totalProblems"]
+    has_fail = any(item["result"] == "fail" for item in quality["results"])
+    dataset["qualityStatus"] = "passed" if total_problems == 0 else "failed" if has_fail else "warning"
+    dataset["qualitySummary"] = {
+        "totalProblems": total_problems,
+        "missingCount": quality["summary"]["missingCount"],
+        "abnormalCount": quality["summary"]["abnormalCount"],
+    }
+    dataset["rowCount"] = quality["summary"]["rowCount"]
+    dataset["columns"] = list(df.columns)
+    return {"datasetId": dataset_id, **quality}
+
+
+@app.post("/api/datasets/{dataset_id}/repair")
+def repair_dataset(dataset_id: str, input_data: RepairDatasetInput) -> dict[str, Any]:
+    """Repair dataset with selected actions."""
+    dataset = _get_dataset(dataset_id)
+    df = _read_dataset_csv(dataset)
+    actions = set(input_data.actions)
+
+    if "drop_duplicate_dates" in actions and "date" in df.columns:
+        df = df.drop_duplicates(subset=["date"], keep="last").reset_index(drop=True)
+    if "fill_missing_maintenance" in actions:
+        if "is_maintenance" not in df.columns:
+            df["is_maintenance"] = 0
+        df["is_maintenance"] = df["is_maintenance"].fillna(0)
+    if "fill_missing_holiday" in actions:
+        if "is_holiday" not in df.columns:
+            df["is_holiday"] = 0
+        df["is_holiday"] = df["is_holiday"].fillna(0)
+    if "generate_lag" in actions:
+        if "purchase_power" not in df.columns:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="缺少 purchase_power，无法生成 lag 特征")
+        if "date" in df.columns:
+            df["date"] = pd.to_datetime(df["date"], errors="coerce")
+            df = df.sort_values("date").reset_index(drop=True)
+            df["date"] = df["date"].dt.strftime("%Y-%m-%d")
+        purchase = pd.to_numeric(df["purchase_power"], errors="coerce")
+        df["purchase_lag_1"] = purchase.shift(1)
+        df["purchase_lag_7"] = purchase.shift(7)
+        df["purchase_rolling_7"] = purchase.shift(1).rolling(window=7, min_periods=1).mean()
+
+    processed_dir = Path("data/processed")
+    processed_dir.mkdir(parents=True, exist_ok=True)
+    repaired_path = processed_dir / f"{dataset_id}_repaired.csv"
+    df.to_csv(repaired_path, index=False, encoding="utf-8")
+    dataset["repairedFilePath"] = str(repaired_path)
+    dataset["filePath"] = str(repaired_path)
+    dataset["rowCount"] = int(len(df))
+    dataset["columns"] = list(df.columns)
+    dataset["qualityStatus"] = "unchecked"
+    return {
+        "success": True,
+        "datasetId": dataset_id,
+        "repairedFilePath": str(repaired_path),
+        "message": "数据修复完成",
+    }
+
+
+@app.post("/api/datasets/{dataset_id}/activate")
+def activate_dataset(dataset_id: str, input_data: ActivateDatasetInput) -> dict[str, Any]:
+    """Activate dataset for training or prediction."""
+    dataset = _get_dataset(dataset_id)
+    return _set_active_dataset(dataset, input_data.datasetType)
+
+
 @app.get("/api/dashboard/summary", response_model=DashboardSummaryOutput)
 def get_dashboard_summary() -> dict[str, Any]:
     """Get dashboard summary statistics."""
@@ -487,19 +994,22 @@ def get_dashboard_summary() -> dict[str, Any]:
             "todayErrorRate": 3.89,
             "abnormalCount": 3,
             "totalModelVersions": len(versions),
-            "totalPredictions": 1245
+            "totalPredictions": 1245,
+            "hasProductionModel": True,
+            "message": None,
         }
     except Exception:
-        # Fallback to mock data
         return {
-            "currentModelVersion": "v2.1.0",
-            "currentAlgorithm": "RandomForest",
-            "latestMape": 4.21,
-            "todayPrediction": 895.67,
-            "todayErrorRate": 3.89,
-            "abnormalCount": 3,
-            "totalModelVersions": 4,
-            "totalPredictions": 1245
+            "currentModelVersion": "-",
+            "currentAlgorithm": "-",
+            "latestMape": 0,
+            "todayPrediction": 0,
+            "todayErrorRate": 0,
+            "abnormalCount": 0,
+            "totalModelVersions": 0,
+            "totalPredictions": 0,
+            "hasProductionModel": False,
+            "message": "暂无生产模型",
         }
 
 
@@ -511,24 +1021,7 @@ def list_model_versions() -> List[Dict[str, Any]]:
         versions = registry.list_versions()
         result = []
         for v in versions:
-            metrics = v.get("metrics", {})
-            result.append({
-                "version": v["model_id"],
-                "modelName": "purchase_power",
-                "algorithm": v.get("algorithm", "unknown"),
-                "status": v["status"],
-                "trainDataStart": v.get("train_data_start", "-"),
-                "trainDataEnd": v.get("train_data_end", "-"),
-                "mae": metrics.get("mae", 0.0),
-                "mape": metrics.get("mape", 0.0),
-                "rmse": metrics.get("rmse", 0.0),
-                "r2": metrics.get("r2", 0.0),
-                "createdAt": v.get("registered_at", ""),
-                "publishedAt": v.get("promoted_at"),
-                "features": v.get("feature_list", []),
-                "params": v.get("params", {}),
-                "remark": v.get("remark", "")
-            })
+            result.append(_model_response_from_manifest(v))
         return result
     except Exception as e:
         raise HTTPException(
@@ -546,23 +1039,7 @@ def get_current_production_model() -> Dict[str, Any]:
         production_model = registry.get_production_model_info()
         metrics = production_model.get("metrics", {})
         
-        return {
-            "version": production_model["model_id"],
-            "modelName": "purchase_power",
-            "algorithm": production_model.get("algorithm", "RandomForest"),
-            "status": production_model["status"],
-            "trainDataStart": production_model.get("train_data_start", "2024-01-01"),
-            "trainDataEnd": production_model.get("train_data_end", "2024-12-31"),
-            "mae": metrics.get("mae", 0.0),
-            "mape": metrics.get("mape", 0.0),
-            "rmse": metrics.get("rmse", 0.0),
-            "r2": metrics.get("r2", 0.0),
-            "createdAt": production_model["registered_at"],
-            "publishedAt": production_model.get("promoted_at"),
-            "features": production_model.get("feature_list", []),
-            "params": production_model.get("params", {}),
-            "remark": production_model.get("remark", "")
-        }
+        return _model_response_from_manifest(production_model)
     except ModelNotFoundError:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -582,25 +1059,7 @@ def get_model_version(version: str) -> Dict[str, Any]:
     try:
         registry = get_registry()
         model_info = registry.get_model_info(version)
-        metrics = model_info.get("metrics", {})
-        
-        return {
-            "version": model_info["model_id"],
-            "modelName": "purchase_power",
-            "algorithm": model_info.get("algorithm", "RandomForest"),
-            "status": model_info["status"],
-            "trainDataStart": model_info.get("train_data_start", "2024-01-01"),
-            "trainDataEnd": model_info.get("train_data_end", "2024-12-31"),
-            "mae": metrics.get("mae", 0.0),
-            "mape": metrics.get("mape", 0.0),
-            "rmse": metrics.get("rmse", 0.0),
-            "r2": metrics.get("r2", 0.0),
-            "createdAt": model_info["registered_at"],
-            "publishedAt": model_info.get("promoted_at"),
-            "features": model_info.get("feature_list", []),
-            "params": model_info.get("params", {}),
-            "remark": model_info.get("remark", "")
-        }
+        return _model_response_from_manifest(model_info)
     except ModelNotFoundError:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -813,6 +1272,12 @@ def run_training_job(input_data: CreateTrainingJobInput) -> dict[str, Any]:
     TRAINING_LOGS[job_id] = [
         {"timestamp": start_time, "level": "info", "content": "开始训练任务"}
     ]
+    dataset = _get_dataset(input_data.datasetId) if input_data.datasetId else _get_active_dataset("training")
+    if not dataset:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="请先上传并激活训练数据集。")
+    if dataset["datasetType"] != "training":
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="请选择 training 类型的数据集。")
+    dataset_file_path = dataset.get("repairedFilePath") or dataset["filePath"]
     
     # Add job to list first
     job = {
@@ -828,6 +1293,9 @@ def run_training_job(input_data: CreateTrainingJobInput) -> dict[str, Any]:
         "trainDataRange": [input_data.trainDataStart, input_data.trainDataEnd],
         "errorMessage": None,
         "remark": input_data.remark,
+        "datasetId": dataset["datasetId"],
+        "datasetFilePath": dataset_file_path,
+        "rowCount": dataset.get("rowCount", 0),
     }
     TRAINING_JOBS.append(job)
     
@@ -845,32 +1313,34 @@ def run_training_job(input_data: CreateTrainingJobInput) -> dict[str, Any]:
             data_config_path = "config/data_config.yaml"
             model_config_path = "config/model_config.yaml"
 
-        import yaml
-        with open(data_config_path, "r", encoding="utf-8") as f:
-            data_config = yaml.safe_load(f)
-        raw_data_path = data_config.get("paths", {}).get("raw_data")
-        if raw_data_path and not Path(raw_data_path).exists():
+        if not Path(dataset_file_path).exists():
             raise FileNotFoundError(
-                f"Raw data file not found: {raw_data_path}. 请先在数据管理页面上传/准备训练数据。"
+                f"Raw data file not found: {dataset_file_path}. 请先在数据管理页面上传/准备训练数据。"
             )
-             
+              
         result = train_model(
+            data_path=dataset_file_path,
             data_config_path=data_config_path,
             model_config_path=model_config_path,
             model_name=input_data.algorithm,
+            extra_metadata={
+                "datasetId": dataset["datasetId"],
+                "datasetFilePath": dataset_file_path,
+                "rowCount": dataset.get("rowCount", 0),
+            },
         )
         
         job["progress"] = 100.0
         job["status"] = "success"
         job["endTime"] = datetime.now().isoformat()
         job["metrics"] = result.get("metrics", {})
-        job["modelVersion"] = model_version
+        job["modelVersion"] = result.get("model_id", model_version)
         TRAINING_LOGS[job_id].append({"timestamp": datetime.now().isoformat(), "level": "info", "content": "训练完成"})
         
         return {
             "success": True,
             "jobId": job_id,
-            "modelVersion": model_version,
+            "modelVersion": job["modelVersion"],
             "algorithm": input_data.algorithm,
             "metrics": job["metrics"],
             "status": "success",
@@ -930,17 +1400,28 @@ def get_training_job_logs(job_id: str) -> List[Dict[str, Any]]:
 
 
 @app.post("/api/predictions/run")
-def run_batch_prediction() -> dict[str, Any]:
+def run_batch_prediction(input_data: Optional[RunPredictionInput] = None) -> dict[str, Any]:
     """Run batch prediction task."""
     try:
-        # Run batch prediction
-        result = run_batch_predict()
+        dataset_id = input_data.datasetId if input_data else None
+        dataset = _get_dataset(dataset_id) if dataset_id else _get_active_dataset("prediction")
+        if not dataset:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="请先上传并激活预测输入数据集。")
+        if dataset["datasetType"] != "prediction":
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="请选择 prediction 类型的数据集。")
+        dataset_file_path = dataset.get("repairedFilePath") or dataset["filePath"]
+        if not Path(dataset_file_path).exists():
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Dataset file not found: {dataset_file_path}")
+
+        result = run_batch_predict(data_path=dataset_file_path, output_path="outputs/reports/prediction_result.csv")
         output_path = result.get("output_path", "outputs/reports/prediction_result.csv")
         sample_count = result.get("sample_count", 0)
-        model_version = result.get("model_version", "unknown")
+        model_version = result.get("model_id", result.get("model_version", "unknown"))
         
         return {
             "success": True,
+            "datasetId": dataset["datasetId"],
+            "datasetFilePath": dataset_file_path,
             "outputPath": output_path,
             "sampleCount": sample_count,
             "modelVersion": model_version,
@@ -948,6 +1429,8 @@ def run_batch_prediction() -> dict[str, Any]:
             "predictTime": datetime.now().isoformat(),
             "message": f"批量预测完成，共生成 {sample_count} 条预测记录"
         }
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -963,7 +1446,6 @@ def get_prediction_records(
     status: Optional[str] = Query(None, description="Filter by status")
 ) -> List[Dict[str, Any]]:
     """Get prediction records with optional filters."""
-    # Try to read real prediction file first
     try:
         pred_file = Path("outputs/reports/prediction_result.csv")
         if pred_file.exists():
@@ -972,7 +1454,8 @@ def get_prediction_records(
             
             for idx, row in df.iterrows():
                 actual = row.get("purchase_power")
-                predict_val = row.get("prediction", row.get("predicted_purchase_power", 0))
+                predict_val = row.get("prediction_value", row.get("prediction", row.get("predicted_purchase_power", 0)))
+                actual = None if pd.isna(actual) else actual
                 error = abs(predict_val - actual) if actual is not None else None
                 error_rate = round(error / actual * 100, 2) if actual is not None and actual > 0 else None
                 
@@ -1010,23 +1493,10 @@ def get_prediction_records(
                 predictions = [p for p in predictions if p["status"] == status]
             
             return predictions
-    except Exception:
-        pass
-    
-    # Fallback to mock data
-    predictions = get_mock_predictions()
-    
-    # Apply filters
-    if date_start:
-        predictions = [p for p in predictions if p["datetime"] >= date_start]
-    if date_end:
-        predictions = [p for p in predictions if p["datetime"] <= date_end]
-    if model_version:
-        predictions = [p for p in predictions if p["modelVersion"] == model_version]
-    if status:
-        predictions = [p for p in predictions if p["status"] == status]
-    
-    return predictions
+    except Exception as e:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to load predictions: {str(e)}")
+
+    return []
 
 
 @app.post("/api/evaluation/{version}/run")

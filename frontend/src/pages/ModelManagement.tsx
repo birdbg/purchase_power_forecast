@@ -32,6 +32,9 @@ interface ModelVersion {
   features: string[]
   params: Record<string, any>
   remark?: string
+  datasetId?: string
+  datasetFilePath?: string
+  rowCount?: number
 }
 
 const ModelManagement: React.FC = () => {
@@ -67,7 +70,10 @@ const ModelManagement: React.FC = () => {
         createdBy: 'admin',
         features: model.features || [],
         params: model.params || {},
-        remark: model.remark
+        remark: model.remark,
+        datasetId: model.datasetId,
+        datasetFilePath: model.datasetFilePath,
+        rowCount: model.rowCount
       }))
       setModels(formattedModels)
     } catch (error) {
@@ -389,6 +395,15 @@ const ModelManagement: React.FC = () => {
               </Descriptions.Item>
               <Descriptions.Item label="训练数据范围" span={2}>
                 {currentModel.dataRange}
+              </Descriptions.Item>
+              <Descriptions.Item label="数据集ID" span={1}>
+                {currentModel.datasetId || '-'}
+              </Descriptions.Item>
+              <Descriptions.Item label="数据行数" span={1}>
+                {currentModel.rowCount || '-'}
+              </Descriptions.Item>
+              <Descriptions.Item label="数据集路径" span={2}>
+                {currentModel.datasetFilePath || '-'}
               </Descriptions.Item>
               <Descriptions.Item label="MAE" span={1}>
                 {currentModel.mae.toFixed(2)}

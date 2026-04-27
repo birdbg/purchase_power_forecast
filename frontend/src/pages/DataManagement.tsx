@@ -1,14 +1,20 @@
-import React, { useState } from 'react'
+import React, { useEffect, useMemo, useState } from 'react'
 import {
-  Card, Row, Col, Button, Upload, Table, Alert, Statistic,
-  Typography, Space, Tag, message
+  Alert, Button, Card, Col, Descriptions, Row, Space, Statistic, Table,
+  Tag, Typography, Upload, message
 } from 'antd'
 import type { TableProps, UploadProps } from 'antd'
-import { UploadOutlined, DownloadOutlined, CheckCircleOutlined, WarningOutlined, CloseCircleOutlined } from '@ant-design/icons'
+import {
+  CheckCircleOutlined, CloseCircleOutlined, DownloadOutlined,
+  ReloadOutlined, ToolOutlined, UploadOutlined, WarningOutlined
+} from '@ant-design/icons'
+import {
+  activateDataset, getActiveDatasets, getDatasets, qualityCheckDataset,
+  repairDataset, uploadDataset, type DatasetInfo, type QualityCheckResult
+} from '@/api/datasetApi'
 
 const { Title, Text, Paragraph } = Typography
 
-// 定义类型
 interface DataField {
   key: string
   fieldName: string
@@ -18,379 +24,148 @@ interface DataField {
   example: string
 }
 
-interface QualityCheckResult {
-  key: string
-  checkItem: string
-  result: 'pass' | 'warning' | 'fail'
-  problemCount: number
-  suggestion: string
-}
-
-// 数据字段说明
 const fieldData: DataField[] = [
-  {
-    key: 'date',
-    fieldName: 'date',
-    description: '日期',
-    type: '日期',
-    required: true,
-    example: '2024-01-01'
-  },
-  {
-    key: 'purchase_power',
-    fieldName: 'purchase_power',
-    description: '外购电量',
-    type: '数值',
-    required: true,
-    example: '1250.5'
-  },
-  {
-    key: 'total_power',
-    fieldName: 'total_power',
-    description: '总用电量',
-    type: '数值',
-    required: true,
-    example: '2800.3'
-  },
-  {
-    key: 'self_power',
-    fieldName: 'self_power',
-    description: '自发电量',
-    type: '数值',
-    required: true,
-    example: '1549.8'
-  },
-  {
-    key: 'steel_output',
-    fieldName: 'steel_output',
-    description: '粗钢产量',
-    type: '数值',
-    required: true,
-    example: '8500'
-  },
-  {
-    key: 'rolling_output',
-    fieldName: 'rolling_output',
-    description: '轧钢产量',
-    type: '数值',
-    required: true,
-    example: '7200'
-  },
-  {
-    key: 'temperature',
-    fieldName: 'temperature',
-    description: '当日平均气温',
-    type: '数值',
-    required: true,
-    example: '23.5'
-  },
-  {
-    key: 'is_holiday',
-    fieldName: 'is_holiday',
-    description: '是否节假日',
-    type: '布尔/数值(0/1)',
-    required: true,
-    example: '0'
-  },
-  {
-    key: 'is_maintenance',
-    fieldName: 'is_maintenance',
-    description: '是否设备检修',
-    type: '布尔/数值(0/1)',
-    required: true,
-    example: '1'
-  }
+  { key: 'date', fieldName: 'date', description: '日期', type: '日期', required: true, example: '2024-01-01' },
+  { key: 'purchase_power', fieldName: 'purchase_power', description: '外购电量', type: '数值', required: true, example: '1250.5' },
+  { key: 'total_power', fieldName: 'total_power', description: '总用电量', type: '数值', required: true, example: '2800.3' },
+  { key: 'self_power', fieldName: 'self_power', description: '自发电量', type: '数值', required: true, example: '1549.8' },
+  { key: 'steel_output', fieldName: 'steel_output', description: '粗钢产量', type: '数值', required: true, example: '8500' },
+  { key: 'rolling_output', fieldName: 'rolling_output', description: '轧钢产量', type: '数值', required: true, example: '7200' },
+  { key: 'temperature', fieldName: 'temperature', description: '当日平均气温', type: '数值', required: true, example: '23.5' },
+  { key: 'is_holiday', fieldName: 'is_holiday', description: '是否节假日', type: '布尔/数值(0/1)', required: true, example: '0' },
+  { key: 'is_maintenance', fieldName: 'is_maintenance', description: '是否设备检修', type: '布尔/数值(0/1)', required: true, example: '1' }
 ]
 
-const requiredFields = [
-  'date',
-  'purchase_power',
-  'total_power',
-  'self_power',
-  'steel_output',
-  'rolling_output',
-  'temperature',
-  'is_holiday',
-  'is_maintenance'
-]
-
-const numericFields = [
-  'purchase_power',
-  'total_power',
-  'self_power',
-  'steel_output',
-  'rolling_output',
-  'temperature',
-  'purchase_lag_1',
-  'purchase_lag_7',
-  'purchase_rolling_7'
-]
-
-const lagFields = ['purchase_lag_1', 'purchase_lag_7', 'purchase_rolling_7']
-
-const parseCsvLine = (line: string): string[] => {
-  const result: string[] = []
-  let current = ''
-  let inQuotes = false
-
-  for (let i = 0; i < line.length; i += 1) {
-    const char = line[i]
-    const nextChar = line[i + 1]
-    if (char === '"' && inQuotes && nextChar === '"') {
-      current += '"'
-      i += 1
-    } else if (char === '"') {
-      inQuotes = !inQuotes
-    } else if (char === ',' && !inQuotes) {
-      result.push(current.trim())
-      current = ''
-    } else {
-      current += char
-    }
-  }
-  result.push(current.trim())
-  return result
-}
-
-const parseCsv = (text: string): { headers: string[]; rows: Record<string, string>[] } => {
-  const lines = text
-    .replace(/^\uFEFF/, '')
-    .split(/\r?\n/)
-    .filter(line => line.trim().length > 0)
-
-  if (lines.length === 0) {
-    return { headers: [], rows: [] }
-  }
-
-  const headers = parseCsvLine(lines[0]).map(header => header.replace(/^\uFEFF/, '').trim())
-  const rows = lines.slice(1).map(line => {
-    const values = parseCsvLine(line)
-    return headers.reduce<Record<string, string>>((record, header, index) => {
-      record[header] = values[index]?.trim() || ''
-      return record
-    }, {})
-  })
-
-  return { headers, rows }
+const fixActionLabel: Record<string, string> = {
+  generate_lag: '生成 lag 特征',
+  drop_duplicate_dates: '删除重复日期',
+  fill_missing_maintenance: '检修空值填 0',
+  fill_missing_holiday: '节假日空值填 0'
 }
 
 const DataManagement: React.FC = () => {
-  const [checking, setChecking] = useState(false)
-  const [historyFile, setHistoryFile] = useState<File | null>(null)
+  const [datasets, setDatasets] = useState<DatasetInfo[]>([])
+  const [activeTraining, setActiveTraining] = useState<DatasetInfo | null>(null)
+  const [activePrediction, setActivePrediction] = useState<DatasetInfo | null>(null)
+  const [selectedDataset, setSelectedDataset] = useState<DatasetInfo | null>(null)
   const [qualityResults, setQualityResults] = useState<QualityCheckResult[]>([])
-  const [dataSummary, setDataSummary] = useState({
-    rowCount: 0,
-    dateRange: '-',
-    missingCount: 0,
-    abnormalCount: 0
-  })
+  const [dataSummary, setDataSummary] = useState({ rowCount: 0, dateRange: '-', missingCount: 0, abnormalCount: 0 })
+  const [loading, setLoading] = useState(false)
+  const [checking, setChecking] = useState(false)
+  const [repairing, setRepairing] = useState(false)
 
-  // 上传历史数据配置
+  const loadDatasets = async () => {
+    setLoading(true)
+    try {
+      const [list, active] = await Promise.all([getDatasets(), getActiveDatasets()])
+      setDatasets(list)
+      setActiveTraining(active.training)
+      setActivePrediction(active.prediction)
+    } catch (error: any) {
+      message.error(error?.response?.data?.detail || error.message || '加载数据集失败')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  useEffect(() => {
+    loadDatasets()
+  }, [])
+
+  const handleUpload = async (file: File, datasetType: 'training' | 'prediction') => {
+    setLoading(true)
+    try {
+      const dataset = await uploadDataset(file, datasetType)
+      setSelectedDataset(dataset)
+      setQualityResults([])
+      setDataSummary({ rowCount: dataset.rowCount, dateRange: '-', missingCount: 0, abnormalCount: 0 })
+      message.success(`上传成功：${dataset.fileName}，datasetId=${dataset.datasetId}`)
+      await loadDatasets()
+    } catch (error: any) {
+      message.error(error?.response?.data?.detail || error.message || '上传失败')
+    } finally {
+      setLoading(false)
+    }
+  }
+
   const historyUploadProps: UploadProps = {
     name: 'file',
     accept: '.csv,.xlsx,.xls',
     showUploadList: false,
     beforeUpload: (file) => {
-      setHistoryFile(file)
-      setQualityResults([])
-      setDataSummary({
-        rowCount: 0,
-        dateRange: '-',
-        missingCount: 0,
-        abnormalCount: 0
-      })
-      message.success(`已选择历史数据文件：${file.name}`)
-      return false // 阻止自动上传
+      handleUpload(file, 'training')
+      return false
     }
   }
 
-  // 上传预测输入数据配置
   const predictUploadProps: UploadProps = {
     name: 'file',
     accept: '.csv,.xlsx,.xls',
     showUploadList: false,
     beforeUpload: (file) => {
-      message.success(`已选择预测输入数据文件：${file.name}`)
-      return false // 阻止自动上传
+      handleUpload(file, 'prediction')
+      return false
     }
   }
 
-  // 数据质量检查
-  const handleQualityCheck = () => {
-    if (!historyFile) {
-      message.warning('请先上传历史数据')
+  const handleQualityCheck = async (dataset = selectedDataset) => {
+    if (!dataset) {
+      message.warning('请先选择或上传数据集')
       return
     }
-
-    const fileName = historyFile.name.toLowerCase()
-    if (fileName.endsWith('.xlsx') || fileName.endsWith('.xls')) {
-      message.warning('Excel 质量检查暂未支持，请先另存为 CSV')
-      return
-    }
-
-    if (!fileName.endsWith('.csv')) {
-      message.warning('第一版质量检查仅支持 CSV 文件')
-      return
-    }
-
     setChecking(true)
-    const reader = new FileReader()
-    reader.onload = () => {
-      try {
-        const text = String(reader.result || '')
-        const { headers, rows } = parseCsv(text)
-        const headerSet = new Set(headers)
-        const missingRequiredFields = requiredFields.filter(field => !headerSet.has(field))
-
-        const dateMissingCount = headerSet.has('date')
-          ? rows.filter(row => !row.date).length
-          : rows.length
-        const purchaseMissingCount = headerSet.has('purchase_power')
-          ? rows.filter(row => !row.purchase_power).length
-          : rows.length
-
-        let negativeValueCount = 0
-        numericFields.forEach(field => {
-          if (!headerSet.has(field)) return
-          rows.forEach(row => {
-            const value = row[field]
-            if (value !== '' && Number(value) < 0) {
-              negativeValueCount += 1
-            }
-          })
-        })
-
-        const dateCounts = new Map<string, number>()
-        if (headerSet.has('date')) {
-          rows.forEach(row => {
-            if (!row.date) return
-            dateCounts.set(row.date, (dateCounts.get(row.date) || 0) + 1)
-          })
-        }
-        const duplicateDateCount = Array.from(dateCounts.values()).reduce(
-          (sum, count) => sum + Math.max(0, count - 1),
-          0
-        )
-
-        let lagMissingCount = 0
-        lagFields.forEach(field => {
-          if (!headerSet.has(field)) {
-            lagMissingCount += rows.length
-            return
-          }
-          lagMissingCount += rows.filter(row => !row[field]).length
-        })
-
-        const rowCountWarning = rows.length < 30 ? 1 : 0
-        const dates = rows
-          .map(row => row.date)
-          .filter(Boolean)
-          .sort()
-        const dateRange = dates.length > 0 ? `${dates[0]} ~ ${dates[dates.length - 1]}` : '-'
-
-        const results: QualityCheckResult[] = [
-          {
-            key: 'required-fields',
-            checkItem: '必填字段存在检查',
-            result: missingRequiredFields.length > 0 ? 'fail' : 'pass',
-            problemCount: missingRequiredFields.length,
-            suggestion: missingRequiredFields.length > 0
-              ? `缺少字段：${missingRequiredFields.join(', ')}`
-              : '无需处理'
-          },
-          {
-            key: 'date-missing',
-            checkItem: 'date 缺失检查',
-            result: dateMissingCount > 0 ? 'fail' : 'pass',
-            problemCount: dateMissingCount,
-            suggestion: dateMissingCount > 0 ? '补充 date 或删除对应记录' : '无需处理'
-          },
-          {
-            key: 'purchase-power-missing',
-            checkItem: 'purchase_power 缺失检查',
-            result: purchaseMissingCount > 0 ? 'fail' : 'pass',
-            problemCount: purchaseMissingCount,
-            suggestion: purchaseMissingCount > 0 ? '补充外购电量或删除对应记录' : '无需处理'
-          },
-          {
-            key: 'negative-values',
-            checkItem: '数值字段负数检查',
-            result: negativeValueCount > 0 ? 'fail' : 'pass',
-            problemCount: negativeValueCount,
-            suggestion: negativeValueCount > 0 ? '检查并修正负数异常值' : '无需处理'
-          },
-          {
-            key: 'duplicate-date',
-            checkItem: '日期重复检查',
-            result: duplicateDateCount > 0 ? 'warning' : 'pass',
-            problemCount: duplicateDateCount,
-            suggestion: duplicateDateCount > 0 ? '删除或合并重复日期记录' : '无需处理'
-          },
-          {
-            key: 'lag-missing',
-            checkItem: 'lag 字段缺失检查',
-            result: lagMissingCount > 0 ? 'warning' : 'pass',
-            problemCount: lagMissingCount,
-            suggestion: lagMissingCount > 0 ? '重新生成 purchase_lag_1、purchase_lag_7、purchase_rolling_7' : '无需处理'
-          },
-          {
-            key: 'row-count',
-            checkItem: '数据行数检查',
-            result: rowCountWarning > 0 ? 'warning' : 'pass',
-            problemCount: rowCountWarning,
-            suggestion: rowCountWarning > 0 ? '训练数据少于 30 行，建议补充更多历史数据' : '无需处理'
-          }
-        ]
-
-        const totalProblems = results.reduce((sum, item) => sum + item.problemCount, 0)
-        setQualityResults(results)
-        setDataSummary({
-          rowCount: rows.length,
-          dateRange,
-          missingCount: dateMissingCount + purchaseMissingCount + lagMissingCount,
-          abnormalCount: negativeValueCount + duplicateDateCount
-        })
-
-        if (totalProblems === 0) {
-          message.success('数据质量检查通过，未发现问题')
-        } else {
-          message.success(`数据质量检查完成，共发现 ${totalProblems} 个问题`)
-        }
-      } catch (error) {
-        message.error('CSV 解析失败，请检查文件格式')
-        console.error(error)
-      } finally {
-        setChecking(false)
-      }
-    }
-    reader.onerror = () => {
+    try {
+      const result = await qualityCheckDataset(dataset.datasetId)
+      setQualityResults(result.results)
+      setDataSummary(result.summary)
+      message.success(result.totalProblems === 0 ? '数据质量检查通过，未发现问题' : `数据质量检查完成，共发现 ${result.totalProblems} 个问题`)
+      await loadDatasets()
+    } catch (error: any) {
+      message.error(error?.response?.data?.detail || error.message || '质量检查失败')
+    } finally {
       setChecking(false)
-      message.error('文件读取失败，请重新选择 CSV 文件')
     }
-    reader.readAsText(historyFile, 'utf-8')
   }
 
-  // 下载数据模板
+  const repairableActions = useMemo(() => Array.from(new Set(
+    qualityResults.filter(item => item.fixable && item.fixAction).map(item => item.fixAction as string)
+  )), [qualityResults])
+
+  const handleRepair = async (actions = repairableActions) => {
+    if (!selectedDataset) {
+      message.warning('请先选择数据集')
+      return
+    }
+    if (actions.length === 0) {
+      message.warning('当前没有可修复项')
+      return
+    }
+    setRepairing(true)
+    try {
+      await repairDataset(selectedDataset.datasetId, actions)
+      message.success('数据修复完成')
+      await loadDatasets()
+      await handleQualityCheck(selectedDataset)
+    } catch (error: any) {
+      message.error(error?.response?.data?.detail || error.message || '数据修复失败')
+    } finally {
+      setRepairing(false)
+    }
+  }
+
+  const handleActivate = async (dataset: DatasetInfo, datasetType: 'training' | 'prediction') => {
+    try {
+      await activateDataset(dataset.datasetId, datasetType)
+      message.success(datasetType === 'training' ? '已设为当前训练数据' : '已设为当前预测输入')
+      await loadDatasets()
+    } catch (error: any) {
+      message.error(error?.response?.data?.detail || error.message || '激活数据集失败')
+    }
+  }
+
   const handleDownloadTemplate = () => {
-    const headers = [
-      'date',
-      'purchase_power',
-      'total_power',
-      'self_power',
-      'steel_output',
-      'rolling_output',
-      'temperature',
-      'is_holiday',
-      'is_maintenance',
-      'purchase_lag_1',
-      'purchase_lag_7',
-      'purchase_rolling_7'
-    ]
-
-    const rows = [
-      ['2026-01-01', '850.5', '1200.0', '350.0', '800.0', '720.0', '20.0', '0', '0', '840.2', '830.1', '835.6']
-    ]
-
+    const headers = ['date', 'purchase_power', 'total_power', 'self_power', 'steel_output', 'rolling_output', 'temperature', 'is_holiday', 'is_maintenance', 'purchase_lag_1', 'purchase_lag_7', 'purchase_rolling_7']
+    const rows = [['2026-01-01', '850.5', '1200.0', '350.0', '800.0', '720.0', '20.0', '0', '0', '840.2', '830.1', '835.6']]
     const csvContent = [headers.join(','), ...rows.map(r => r.join(','))].join('\n')
     const blob = new Blob(['\uFEFF' + csvContent], { type: 'text/csv;charset=utf-8;' })
     const url = URL.createObjectURL(blob)
@@ -401,93 +176,53 @@ const DataManagement: React.FC = () => {
     link.click()
     document.body.removeChild(link)
     URL.revokeObjectURL(url)
-    
     message.success('数据模板下载成功')
   }
 
-  // 数据字段表列配置
   const fieldColumns: TableProps<DataField>['columns'] = [
+    { title: '字段名', dataIndex: 'fieldName', key: 'fieldName', width: 150, render: name => <Text code>{name}</Text> },
+    { title: '描述', dataIndex: 'description', key: 'description', width: 150 },
+    { title: '类型', dataIndex: 'type', key: 'type', width: 120 },
+    { title: '是否必填', dataIndex: 'required', key: 'required', width: 100, render: required => required ? <Tag color="red">是</Tag> : <Tag color="default">否</Tag> },
+    { title: '示例', dataIndex: 'example', key: 'example', width: 150 }
+  ]
+
+  const datasetColumns: TableProps<DatasetInfo>['columns'] = [
+    { title: 'datasetId', dataIndex: 'datasetId', key: 'datasetId', width: 150, ellipsis: true },
+    { title: '类型', dataIndex: 'datasetType', key: 'datasetType', width: 100, render: type => <Tag color={type === 'training' ? 'blue' : 'purple'}>{type}</Tag> },
+    { title: '文件名', dataIndex: 'fileName', key: 'fileName', width: 180, ellipsis: true },
+    { title: '行数', dataIndex: 'rowCount', key: 'rowCount', width: 90 },
+    { title: '质量状态', dataIndex: 'qualityStatus', key: 'qualityStatus', width: 110 },
+    { title: 'Active', dataIndex: 'isActive', key: 'isActive', width: 90, render: active => active ? <Tag color="success">是</Tag> : <Tag>否</Tag> },
     {
-      title: '字段名',
-      dataIndex: 'fieldName',
-      key: 'fieldName',
-      width: 150,
-      render: (name) => <Text code>{name}</Text>
-    },
-    {
-      title: '描述',
-      dataIndex: 'description',
-      key: 'description',
-      width: 150
-    },
-    {
-      title: '类型',
-      dataIndex: 'type',
-      key: 'type',
-      width: 120
-    },
-    {
-      title: '是否必填',
-      dataIndex: 'required',
-      key: 'required',
-      width: 100,
-      render: (required) => required ? <Tag color="red">是</Tag> : <Tag color="default">否</Tag>
-    },
-    {
-      title: '示例',
-      dataIndex: 'example',
-      key: 'example',
-      width: 150
+      title: '操作', key: 'actions', width: 310, render: (_, record) => (
+        <Space size="small" wrap>
+          <Button size="small" onClick={() => { setSelectedDataset(record); handleQualityCheck(record) }}>质检</Button>
+          {record.datasetType === 'training' && <Button size="small" type="link" onClick={() => handleActivate(record, 'training')}>设为训练数据</Button>}
+          {record.datasetType === 'prediction' && <Button size="small" type="link" onClick={() => handleActivate(record, 'prediction')}>设为预测输入</Button>}
+        </Space>
+      )
     }
   ]
 
-  // 质量检查表列配置
   const qualityColumns: TableProps<QualityCheckResult>['columns'] = [
+    { title: '检查项', dataIndex: 'checkItem', key: 'checkItem', width: 200 },
     {
-      title: '检查项',
-      dataIndex: 'checkItem',
-      key: 'checkItem',
-      width: 200
-    },
-    {
-      title: '检查结果',
-      dataIndex: 'result',
-      key: 'result',
-      width: 120,
-      render: (result) => {
-        let icon, color, text
-        switch (result) {
-          case 'pass':
-            icon = <CheckCircleOutlined />
-            color = '#52c41a'
-            text = '通过'
-            break
-          case 'warning':
-            icon = <WarningOutlined />
-            color = '#faad14'
-            text = '警告'
-            break
-          case 'fail':
-            icon = <CloseCircleOutlined />
-            color = '#ff4d4f'
-            text = '不通过'
-            break
-        }
-        return <Tag icon={icon} color={color}>{text}</Tag>
+      title: '检查结果', dataIndex: 'result', key: 'result', width: 120, render: result => {
+        const config = result === 'pass'
+          ? { icon: <CheckCircleOutlined />, color: '#52c41a', text: '通过' }
+          : result === 'warning'
+            ? { icon: <WarningOutlined />, color: '#faad14', text: '警告' }
+            : { icon: <CloseCircleOutlined />, color: '#ff4d4f', text: '不通过' }
+        return <Tag icon={config.icon} color={config.color}>{config.text}</Tag>
       }
     },
+    { title: '问题数量', dataIndex: 'problemCount', key: 'problemCount', width: 120, align: 'center', render: count => count > 0 ? <Text strong type="danger">{count}</Text> : count },
+    { title: '建议处理方式', dataIndex: 'suggestion', key: 'suggestion' },
     {
-      title: '问题数量',
-      dataIndex: 'problemCount',
-      key: 'problemCount',
-      width: 120,
-      align: 'center',
-      render: (count) => count > 0 ? <Text strong type="danger">{count}</Text> : count
-    },
-    {
-      title: '建议处理方式',
-      dataIndex: 'suggestion',
-      key: 'suggestion'
+      title: '处理', key: 'fix', width: 150, render: (_, record) => record.fixable && record.fixAction ? (
+        <Button size="small" icon={<ToolOutlined />} onClick={() => handleRepair([record.fixAction!])}>{fixActionLabel[record.fixAction]}</Button>
+      ) : '-'
     }
   ]
 
@@ -495,105 +230,74 @@ const DataManagement: React.FC = () => {
     <div>
       <Title level={4} style={{ marginBottom: 24 }}>数据管理</Title>
 
-      {/* 顶部操作区 */}
       <Card bordered={false} style={{ marginBottom: 24 }}>
         <Space wrap>
-          <Upload {...historyUploadProps}>
-            <Button icon={<UploadOutlined />}>
-              上传历史数据
-            </Button>
-          </Upload>
-          <Upload {...predictUploadProps}>
-            <Button icon={<UploadOutlined />}>
-              上传预测输入数据
-            </Button>
-          </Upload>
-          <Button onClick={handleQualityCheck} loading={checking} type="primary">
-            数据质量检查
-          </Button>
-          <Button icon={<DownloadOutlined />} onClick={handleDownloadTemplate}>
-            下载数据模板
-          </Button>
+          <Upload {...historyUploadProps}><Button icon={<UploadOutlined />} loading={loading}>上传训练 CSV</Button></Upload>
+          <Upload {...predictUploadProps}><Button icon={<UploadOutlined />} loading={loading}>上传预测输入 CSV</Button></Upload>
+          <Button onClick={() => handleQualityCheck()} loading={checking} type="primary">数据质量检查</Button>
+          <Button icon={<ToolOutlined />} onClick={() => handleRepair()} loading={repairing}>修复数据</Button>
+          <Button icon={<ReloadOutlined />} onClick={loadDatasets} loading={loading}>刷新数据集</Button>
+          <Button icon={<DownloadOutlined />} onClick={handleDownloadTemplate}>下载数据模板</Button>
         </Space>
       </Card>
 
-      {/* 数据概览卡片 */}
       <Row gutter={[16, 16]} style={{ marginBottom: 24 }}>
-        <Col xs={24} sm={12} md={6}>
-          <Card>
-            <Statistic
-              title="历史数据总行数"
-              value={dataSummary.rowCount}
-              suffix="行"
-              valueStyle={{ color: '#1890ff' }}
-            />
-          </Card>
+        <Col xs={24} lg={12}>
+          <Alert
+            message="当前训练数据集"
+            description={activeTraining ? `${activeTraining.datasetId} / ${activeTraining.fileName} / ${activeTraining.rowCount} 行` : '暂无，请上传训练 CSV 并设为训练数据'}
+            type={activeTraining ? 'success' : 'warning'}
+            showIcon
+          />
         </Col>
-        <Col xs={24} sm={12} md={6}>
-          <Card>
-            <Statistic
-              title="日期范围"
-              value={dataSummary.dateRange}
-              valueStyle={{ color: '#722ed1', fontSize: '16px' }}
-            />
-          </Card>
-        </Col>
-        <Col xs={24} sm={12} md={6}>
-          <Card>
-            <Statistic
-              title="缺失值数量"
-              value={dataSummary.missingCount}
-              suffix="个"
-              valueStyle={{ color: '#faad14' }}
-            />
-          </Card>
-        </Col>
-        <Col xs={24} sm={12} md={6}>
-          <Card>
-            <Statistic
-              title="异常值数量"
-              value={dataSummary.abnormalCount}
-              suffix="个"
-              valueStyle={{ color: '#ff4d4f' }}
-            />
-          </Card>
+        <Col xs={24} lg={12}>
+          <Alert
+            message="当前预测输入数据集"
+            description={activePrediction ? `${activePrediction.datasetId} / ${activePrediction.fileName} / ${activePrediction.rowCount} 行` : '暂无，请上传预测输入 CSV 并设为预测输入'}
+            type={activePrediction ? 'success' : 'warning'}
+            showIcon
+          />
         </Col>
       </Row>
 
-      {/* 页面提示 */}
+      {selectedDataset && (
+        <Card title="当前选中数据集" bordered={false} style={{ marginBottom: 24 }}>
+          <Descriptions bordered column={2} size="small">
+            <Descriptions.Item label="datasetId">{selectedDataset.datasetId}</Descriptions.Item>
+            <Descriptions.Item label="类型">{selectedDataset.datasetType}</Descriptions.Item>
+            <Descriptions.Item label="文件名">{selectedDataset.fileName}</Descriptions.Item>
+            <Descriptions.Item label="行数">{selectedDataset.rowCount}</Descriptions.Item>
+            <Descriptions.Item label="文件路径" span={2}>{selectedDataset.filePath}</Descriptions.Item>
+            <Descriptions.Item label="字段" span={2}>{selectedDataset.columns.join(', ')}</Descriptions.Item>
+          </Descriptions>
+        </Card>
+      )}
+
+      <Row gutter={[16, 16]} style={{ marginBottom: 24 }}>
+        <Col xs={24} sm={12} md={6}><Card><Statistic title="数据总行数" value={dataSummary.rowCount} suffix="行" /></Card></Col>
+        <Col xs={24} sm={12} md={6}><Card><Statistic title="日期范围" value={dataSummary.dateRange} valueStyle={{ fontSize: 16 }} /></Card></Col>
+        <Col xs={24} sm={12} md={6}><Card><Statistic title="缺失值数量" value={dataSummary.missingCount} suffix="个" /></Card></Col>
+        <Col xs={24} sm={12} md={6}><Card><Statistic title="异常值数量" value={dataSummary.abnormalCount} suffix="个" /></Card></Col>
+      </Row>
+
       <Alert
-        message="数据上传注意事项"
-        description={
-          <div>
-            <Paragraph style={{ margin: 0 }}>• 训练数据必须按时间排序</Paragraph>
-            <Paragraph style={{ margin: '4px 0' }}>• 外购电量不能为空</Paragraph>
-            <Paragraph style={{ margin: '4px 0' }}>• 所有数值字段单位必须统一</Paragraph>
-            <Paragraph style={{ margin: 0 }}>• 时间粒度必须一致（按天/按小时等）</Paragraph>
-          </div>
-        }
+        message="真实数据闭环说明"
+        description={<div><Paragraph style={{ margin: 0 }}>• 上传会保存到后端 data/uploads</Paragraph><Paragraph style={{ margin: '4px 0' }}>• 质量检查、修复、激活均由后端 Dataset 接口完成</Paragraph><Paragraph style={{ margin: 0 }}>• 训练任务只会使用已激活或指定的训练数据集</Paragraph></div>}
         type="info"
         showIcon
         style={{ marginBottom: 24 }}
       />
 
-      {/* 数据字段说明表 */}
-      <Card title="数据字段说明" bordered={false} style={{ marginBottom: 24 }}>
-        <Table
-          columns={fieldColumns}
-          dataSource={fieldData}
-          rowKey="key"
-          pagination={false}
-        />
+      <Card title="已上传数据集" bordered={false} style={{ marginBottom: 24 }}>
+        <Table columns={datasetColumns} dataSource={datasets} rowKey="datasetId" loading={loading} scroll={{ x: 1000 }} />
       </Card>
 
-      {/* 数据质量检查结果 */}
+      <Card title="数据字段说明" bordered={false} style={{ marginBottom: 24 }}>
+        <Table columns={fieldColumns} dataSource={fieldData} rowKey="key" pagination={false} />
+      </Card>
+
       <Card title="数据质量检查结果" bordered={false}>
-        <Table
-          columns={qualityColumns}
-          dataSource={qualityResults}
-          rowKey="key"
-          pagination={false}
-        />
+        <Table columns={qualityColumns} dataSource={qualityResults} rowKey="key" pagination={false} />
       </Card>
     </div>
   )

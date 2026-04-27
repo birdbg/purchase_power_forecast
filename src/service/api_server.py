@@ -14,6 +14,7 @@ Run with: uvicorn src.service.api_server:app --reload
 from __future__ import annotations
 
 from datetime import datetime, timedelta
+from pathlib import Path
 from typing import Any, Optional, List, Dict
 from uuid import uuid4
 import subprocess
@@ -218,6 +219,7 @@ _registry: ModelRegistry | None = None
 
 # Global training jobs storage
 TRAINING_JOBS = []
+TRAINING_LOGS = {}
 
 
 def get_registry() -> ModelRegistry:
@@ -504,37 +506,35 @@ def get_dashboard_summary() -> dict[str, Any]:
 @app.get("/api/models", response_model=List[ModelVersion])
 def list_model_versions() -> List[Dict[str, Any]]:
     """List all model versions."""
-    # Try to get real data first
     try:
         registry = get_registry()
         versions = registry.list_versions()
-        if versions:
-            result = []
-            for v in versions:
-                metrics = v.get("metrics", {})
-                result.append({
-                    "version": v["model_id"],
-                    "modelName": "purchase_power",
-                    "algorithm": v.get("algorithm", "RandomForest"),
-                    "status": v["status"],
-                    "trainDataStart": v.get("train_data_start", "2024-01-01"),
-                    "trainDataEnd": v.get("train_data_end", "2024-12-31"),
-                    "mae": metrics.get("mae", 0.0),
-                    "mape": metrics.get("mape", 0.0),
-                    "rmse": metrics.get("rmse", 0.0),
-                    "r2": metrics.get("r2", 0.0),
-                    "createdAt": v["registered_at"],
-                    "publishedAt": v.get("promoted_at"),
-                    "features": v.get("feature_list", []),
-                    "params": v.get("params", {}),
-                    "remark": v.get("remark", "")
-                })
-            return result
-    except Exception:
-        pass
-    
-    # Fallback to mock data
-    return get_mock_model_versions()
+        result = []
+        for v in versions:
+            metrics = v.get("metrics", {})
+            result.append({
+                "version": v["model_id"],
+                "modelName": "purchase_power",
+                "algorithm": v.get("algorithm", "unknown"),
+                "status": v["status"],
+                "trainDataStart": v.get("train_data_start", "-"),
+                "trainDataEnd": v.get("train_data_end", "-"),
+                "mae": metrics.get("mae", 0.0),
+                "mape": metrics.get("mape", 0.0),
+                "rmse": metrics.get("rmse", 0.0),
+                "r2": metrics.get("r2", 0.0),
+                "createdAt": v.get("registered_at", ""),
+                "publishedAt": v.get("promoted_at"),
+                "features": v.get("feature_list", []),
+                "params": v.get("params", {}),
+                "remark": v.get("remark", "")
+            })
+        return result
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to load model versions: {str(e)}"
+        )
 
 
 @app.get("/api/models/current", response_model=ModelVersion)
@@ -563,13 +563,16 @@ def get_current_production_model() -> Dict[str, Any]:
             "params": production_model.get("params", {}),
             "remark": production_model.get("remark", "")
         }
-    except Exception:
-        # Fallback to mock data
-        mock_versions = get_mock_model_versions()
-        for v in mock_versions:
-            if v["status"] == "production":
-                return v
-        return mock_versions[0]
+    except ModelNotFoundError:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="No production model found"
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to load current production model: {str(e)}"
+        )
 
 
 @app.get("/api/models/{version}", response_model=ModelVersion)
@@ -603,15 +606,10 @@ def get_model_version(version: str) -> Dict[str, Any]:
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Model version {version} not found"
         )
-    except Exception:
-        # Fallback to mock data
-        mock_versions = get_mock_model_versions()
-        for v in mock_versions:
-            if v["version"] == version:
-                return v
+    except Exception as e:
         raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Model version {version} not found"
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to load model version {version}: {str(e)}"
         )
 
 
@@ -664,43 +662,32 @@ def rollback_model_version(version: str) -> dict[str, Any]:
 @app.get("/api/evaluation/{version}", response_model=EvaluationOutput)
 def get_model_evaluation(version: str) -> Dict[str, Any]:
     """Get evaluation results for a specific model version."""
-    # Get mock evaluation samples
-    samples = get_mock_evaluation_samples(version)
-    
-    # Calculate statistics
-    total_samples = len(samples)
-    abnormal_samples = len([s for s in samples if s["status"] == "abnormal"])
-    warning_samples = len([s for s in samples if s["status"] == "warning"])
-    
-    # Try to get real model info first
     try:
         registry = get_registry()
         model_info = registry.get_model_info(version)
-        metrics = model_info.get("metrics", {
-            "mae": 12.34,
-            "mape": 4.21,
-            "rmse": 18.56,
-            "r2": 0.94
-        })
-        train_data_start = model_info.get("train_data_start", "2024-01-01")
-        train_data_end = model_info.get("train_data_end", "2024-12-31")
-        algorithm = model_info.get("algorithm", "RandomForest")
-    except Exception:
-        # Fallback to mock data
-        metrics = {
-            "mae": 12.34,
-            "mape": 4.21,
-            "rmse": 18.56,
-            "r2": 0.94
-        }
-        train_data_start = "2024-01-01"
-        train_data_end = "2024-12-31"
-        algorithm = "RandomForest"
-    
+    except ModelNotFoundError:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Model version {version} not found"
+        )
+
+    report_path = Path(f"outputs/reports/evaluation_report_{version}.json")
+    report: dict[str, Any] = {}
+    if report_path.exists():
+        import json
+        with open(report_path, "r", encoding="utf-8") as f:
+            report = json.load(f)
+
+    metrics = report.get("metrics") or model_info.get("metrics", {})
+    samples = report.get("samples", [])
+    total_samples = len(samples) if samples else int(report.get("test_sample_count", 0))
+    abnormal_samples = len([s for s in samples if s.get("status") == "abnormal"])
+    warning_samples = len([s for s in samples if s.get("status") == "warning"])
+
     return {
         "modelVersion": version,
-        "algorithm": algorithm,
-        "trainDataRange": [train_data_start, train_data_end],
+        "algorithm": model_info.get("algorithm", "unknown"),
+        "trainDataRange": [model_info.get("train_data_start", "-"), model_info.get("train_data_end", "-")],
         "metrics": metrics,
         "samples": samples,
         "totalSamples": total_samples,
@@ -730,13 +717,6 @@ def get_prediction_records(
         predictions = [p for p in predictions if p["status"] == status]
     
     return predictions
-
-
-@app.get("/api/training/jobs", response_model=List[TrainingJob])
-def list_training_jobs() -> List[Dict[str, Any]]:
-    """List all training jobs."""
-    # For now return mock data
-    return get_mock_training_jobs()
 
 
 @app.post("/api/training/jobs", response_model=CreateTrainingJobOutput)
@@ -827,9 +807,12 @@ def predict(input_data: PredictInput) -> dict[str, Any]:
 @app.post("/api/training/run")
 def run_training_job(input_data: CreateTrainingJobInput) -> dict[str, Any]:
     """Run a new training job."""
-    global TRAINING_JOBS
+    global TRAINING_JOBS, TRAINING_LOGS
     job_id = f"job_{uuid4().hex[:8]}"
     start_time = datetime.now().isoformat()
+    TRAINING_LOGS[job_id] = [
+        {"timestamp": start_time, "level": "info", "content": "开始训练任务"}
+    ]
     
     # Add job to list first
     job = {
@@ -845,16 +828,13 @@ def run_training_job(input_data: CreateTrainingJobInput) -> dict[str, Any]:
         "trainDataRange": [input_data.trainDataStart, input_data.trainDataEnd],
         "errorMessage": None,
         "remark": input_data.remark,
-        "logs": [
-            {"timestamp": start_time, "level": "info", "content": "开始训练任务"}
-        ]
     }
     TRAINING_JOBS.append(job)
     
     try:
         # Run training
         model_version = f"v{datetime.now().strftime('%Y%m%d_%H%M%S')}"
-        job["logs"].append({"timestamp": datetime.now().isoformat(), "level": "info", "content": f"生成模型版本: {model_version}"})
+        TRAINING_LOGS[job_id].append({"timestamp": datetime.now().isoformat(), "level": "info", "content": f"生成模型版本: {model_version}"})
         job["progress"] = 30.0
         
         # Select config based on model name
@@ -864,7 +844,16 @@ def run_training_job(input_data: CreateTrainingJobInput) -> dict[str, Any]:
         else:
             data_config_path = "config/data_config.yaml"
             model_config_path = "config/model_config.yaml"
-            
+
+        import yaml
+        with open(data_config_path, "r", encoding="utf-8") as f:
+            data_config = yaml.safe_load(f)
+        raw_data_path = data_config.get("paths", {}).get("raw_data")
+        if raw_data_path and not Path(raw_data_path).exists():
+            raise FileNotFoundError(
+                f"Raw data file not found: {raw_data_path}. 请先在数据管理页面上传/准备训练数据。"
+            )
+             
         result = train_model(
             data_config_path=data_config_path,
             model_config_path=model_config_path,
@@ -876,7 +865,7 @@ def run_training_job(input_data: CreateTrainingJobInput) -> dict[str, Any]:
         job["endTime"] = datetime.now().isoformat()
         job["metrics"] = result.get("metrics", {})
         job["modelVersion"] = model_version
-        job["logs"].append({"timestamp": datetime.now().isoformat(), "level": "info", "content": "训练完成"})
+        TRAINING_LOGS[job_id].append({"timestamp": datetime.now().isoformat(), "level": "info", "content": "训练完成"})
         
         return {
             "success": True,
@@ -887,11 +876,20 @@ def run_training_job(input_data: CreateTrainingJobInput) -> dict[str, Any]:
             "status": "success",
             "message": f"训练完成，模型版本: {model_version}"
         }
+    except FileNotFoundError as e:
+        job["status"] = "failed"
+        job["endTime"] = datetime.now().isoformat()
+        job["errorMessage"] = str(e)
+        TRAINING_LOGS[job_id].append({"timestamp": datetime.now().isoformat(), "level": "error", "content": str(e)})
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e)
+        )
     except Exception as e:
         job["status"] = "failed"
         job["endTime"] = datetime.now().isoformat()
         job["errorMessage"] = str(e)
-        job["logs"].append({"timestamp": datetime.now().isoformat(), "level": "error", "content": f"训练失败: {str(e)}"})
+        TRAINING_LOGS[job_id].append({"timestamp": datetime.now().isoformat(), "level": "error", "content": f"训练失败: {str(e)}"})
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"训练任务失败: {str(e)}"
@@ -902,9 +900,6 @@ def run_training_job(input_data: CreateTrainingJobInput) -> dict[str, Any]:
 def list_training_jobs() -> List[Dict[str, Any]]:
     """List all training jobs."""
     global TRAINING_JOBS
-    # Combine real jobs with mock if no real jobs exist
-    if not TRAINING_JOBS:
-        return get_mock_training_jobs()
     return TRAINING_JOBS
 
 
@@ -915,13 +910,7 @@ def get_training_job(job_id: str) -> Dict[str, Any]:
     for job in TRAINING_JOBS:
         if job["jobId"] == job_id:
             return job
-    
-    # Fallback to mock
-    mock_jobs = get_mock_training_jobs()
-    for job in mock_jobs:
-        if job["jobId"] == job_id:
-            return job
-    
+
     raise HTTPException(
         status_code=status.HTTP_404_NOT_FOUND,
         detail=f"Training job {job_id} not found"
@@ -931,19 +920,13 @@ def get_training_job(job_id: str) -> Dict[str, Any]:
 @app.get("/api/training/jobs/{job_id}/log")
 def get_training_job_logs(job_id: str) -> List[Dict[str, Any]]:
     """Get training job logs by ID."""
-    global TRAINING_JOBS
-    for job in TRAINING_JOBS:
-        if job["jobId"] == job_id:
-            return job.get("logs", [])
-    
-    # Fallback to default logs
-    return [
-        {"timestamp": datetime.now().isoformat(), "level": "info", "content": "训练任务开始"},
-        {"timestamp": datetime.now().isoformat(), "level": "info", "content": "数据加载完成"},
-        {"timestamp": datetime.now().isoformat(), "level": "info", "content": "特征工程完成"},
-        {"timestamp": datetime.now().isoformat(), "level": "info", "content": "模型训练完成"},
-        {"timestamp": datetime.now().isoformat(), "level": "info", "content": "模型注册成功"}
-    ]
+    global TRAINING_LOGS
+    if job_id not in TRAINING_LOGS:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Training job {job_id} logs not found"
+        )
+    return TRAINING_LOGS[job_id]
 
 
 @app.post("/api/predictions/run")
@@ -1057,14 +1040,25 @@ def run_model_evaluation(version: str) -> dict[str, Any]:
             version = production_model["model_id"]
         
         # Run evaluation
-        result = evaluate_model(model_version=version)
+        result = evaluate_model(version=version)
         metrics = result.get("metrics", {})
-        report_path = result.get("report_path", "")
-        
+        report_path = f"outputs/reports/evaluation_report_{version}.json"
+        registry = get_registry()
+        model_info = registry.get_model_info(version)
+        samples: list[dict[str, Any]] = []
+
         return {
             "success": True,
-            "modelVersion": version,
-            "metrics": metrics,
+            "result": {
+                "modelVersion": version,
+                "algorithm": result.get("algorithm", model_info.get("algorithm", "unknown")),
+                "trainDataRange": [model_info.get("train_data_start", "-"), model_info.get("train_data_end", "-")],
+                "metrics": metrics,
+                "samples": samples,
+                "totalSamples": int(result.get("test_sample_count", 0)),
+                "abnormalSamples": 0,
+                "warningSamples": 0,
+            },
             "reportPath": report_path,
             "message": "评估完成"
         }

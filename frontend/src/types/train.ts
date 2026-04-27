@@ -5,7 +5,7 @@ export type TrainingJobStatus = 'pending' | 'running' | 'success' | 'failed'
 export interface TrainingJob {
   jobId: string
   modelName: string
-  algorithm: 'RandomForest' | 'XGBoost' | 'LightGBM'
+  algorithm: 'random_forest' | 'xgboost' | 'lightgbm'
   status: TrainingJobStatus
   startTime: string
   endTime?: string | null
@@ -29,7 +29,7 @@ export type TrainJob = TrainingJob
 // 创建训练任务参数
 export interface CreateTrainJobPayload {
   modelName: string
-  algorithm: 'RandomForest' | 'XGBoost' | 'LightGBM'
+  algorithm: 'random_forest' | 'xgboost' | 'lightgbm'
   trainDataStart: string
   trainDataEnd: string
   params: Record<string, any>
@@ -38,9 +38,10 @@ export interface CreateTrainJobPayload {
 
 // 训练日志类型
 export interface TrainLog {
-  jobId: string
-  logs: string[]
+  id?: number
   timestamp: string
+  level: 'info' | 'warning' | 'error' | string
+  content: string
 }
 
 // 训练结果类型

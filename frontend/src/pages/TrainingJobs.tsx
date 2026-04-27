@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react'
 import {
   Table, Button, Space, Tag, Card, Modal, Drawer, Form, Select, DatePicker,
-  Input, Switch, message, Typography, Row, Col, Alert
+  Input, Switch, message, Typography, Row, Col, Alert, Spin
 } from 'antd'
 import { getTrainingJobs, createTrainingJob, getTrainingLog } from '@/api/trainApi'
 import {
@@ -54,8 +54,7 @@ const TrainingJobs: React.FC = () => {
       const formattedJobs = data.map((job: any) => ({
         id: job.jobId,
         modelName: job.modelName,
-        algorithm: job.algorithm === 'random_forest' ? 'RandomForest' :
-                   job.algorithm === 'xgboost' ? 'XGBoost' : 'LightGBM',
+        algorithm: job.algorithm,
         dataRange: job.trainDataRange ? `${job.trainDataRange[0]} ~ ${job.trainDataRange[1]}` : '-',
         startTime: job.startTime,
         endTime: job.endTime,
@@ -102,6 +101,7 @@ const TrainingJobs: React.FC = () => {
         algorithm: values.algorithm,
         trainDataStart: values.dataRange[0].format('YYYY-MM-DD'),
         trainDataEnd: values.dataRange[1].format('YYYY-MM-DD'),
+        params: {},
         remark: values.remark
       }
       
@@ -142,11 +142,21 @@ const TrainingJobs: React.FC = () => {
         }
       }
     } catch (error: any) {
+      message.destroy()
       message.error(`训练失败：${error?.response?.data?.detail || error.message}`)
       console.error(error)
+      await loadJobs()
     } finally {
       setSubmitLoading(false)
     }
+  }
+
+  const handleCloseCreateModal = () => {
+    if (submitLoading) {
+      message.warning('模型训练中，请等待完成')
+      return
+    }
+    setModalVisible(false)
   }
 
   // 查看日志
@@ -301,7 +311,7 @@ const TrainingJobs: React.FC = () => {
       <div style={{ marginBottom: 24, display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 16 }}>
         <Title level={4} style={{ margin: 0 }}>训练任务管理</Title>
         <Space>
-          <Button type="primary" icon={<PlusOutlined />} onClick={() => setModalVisible(true)}>
+          <Button type="primary" icon={<PlusOutlined />} onClick={() => setModalVisible(true)} disabled={submitLoading}>
             新建训练任务
           </Button>
           <Button icon={<ReloadOutlined />} onClick={loadJobs} loading={loading}>
@@ -314,9 +324,9 @@ const TrainingJobs: React.FC = () => {
             value={algorithmFilter}
             onChange={setAlgorithmFilter}
           >
-            <Option value="XGBoost">XGBoost</Option>
-            <Option value="LightGBM">LightGBM</Option>
-            <Option value="RandomForest">RandomForest</Option>
+            <Option value="xgboost">XGBoost</Option>
+            <Option value="lightgbm">LightGBM</Option>
+            <Option value="random_forest">RandomForest</Option>
           </Select>
           <Select
             placeholder="状态筛选"
@@ -348,7 +358,8 @@ const TrainingJobs: React.FC = () => {
       <Modal
         title="新建训练任务"
         open={modalVisible}
-        onCancel={() => setModalVisible(false)}
+        onCancel={handleCloseCreateModal}
+        maskClosable={!submitLoading}
         footer={null}
         width={600}
       >
@@ -408,9 +419,18 @@ const TrainingJobs: React.FC = () => {
           </Form.Item>
 
           <Alert message="模型训练当前为同步执行，提交后请等待完成，请勿重复提交" type="info" showIcon style={{ marginBottom: 16 }} />
+          {submitLoading && (
+            <Alert
+              type="warning"
+              showIcon
+              icon={<Spin size="small" />}
+              message="模型训练正在执行，当前为同步训练，请勿关闭页面或重复提交。"
+              style={{ marginBottom: 16 }}
+            />
+          )}
           <Form.Item style={{ marginBottom: 0, textAlign: 'right' }}>
             <Space>
-              <Button onClick={() => setModalVisible(false)} disabled={submitLoading}>取消</Button>
+              <Button onClick={handleCloseCreateModal} disabled={submitLoading}>取消</Button>
               <Button type="primary" htmlType="submit" loading={submitLoading} disabled={submitLoading}>提交任务</Button>
             </Space>
           </Form.Item>

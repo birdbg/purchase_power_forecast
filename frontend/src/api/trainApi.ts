@@ -6,24 +6,25 @@ import type { TrainJob, CreateTrainJobPayload, TrainLog, TrainResult } from '@/t
 export const getTrainingJobs = async (): Promise<TrainJob[]> => {
   if (USE_MOCK) {
     return Promise.resolve(mockTrainJobs.map(job => ({
-      id: job.jobId,
-      name: job.modelName,
-      algorithm: job.algorithm,
-      status: job.status,
-      trainDataStart: job.trainDataStart,
-      trainDataEnd: job.trainDataEnd,
+      jobId: job.jobId,
+      modelName: job.modelName,
+      algorithm: job.algorithm === 'RandomForest' ? 'random_forest' : job.algorithm === 'XGBoost' ? 'xgboost' : 'lightgbm',
+      status: job.status as TrainJob['status'],
       startTime: job.startedAt,
       endTime: job.endedAt,
       progress: job.progress,
-      mae: job.mae,
-      mape: job.mape,
-      rmse: job.rmse,
-      r2: job.r2 || 0,
-      createdBy: job.createdBy,
-      dataSize: Math.floor(Math.random() * 1000) + 500
+      metrics: job.mae || job.mape || job.rmse || job.r2 ? {
+        mae: job.mae || 0,
+        mape: job.mape || 0,
+        rmse: job.rmse || 0,
+        r2: job.r2 || 0
+      } : null,
+      params: {},
+      trainDataRange: [job.trainDataStart, job.trainDataEnd] as [string, string],
+      remark: ''
     })))
   }
-  return http.get<TrainJob[]>('/api/training/jobs')
+  return http.get<any, TrainJob[]>('/api/training/jobs')
 }
 
 export interface CreateTrainingJobResponse {
@@ -61,7 +62,7 @@ export const createTrainingJob = async (payload: CreateTrainJobPayload): Promise
       message: '训练任务创建成功，任务ID：' + jobId
     })
   }
-  return http.post<CreateTrainingJobResponse>('/api/training/run', payload)
+  return http.post<any, CreateTrainingJobResponse>('/api/training/run', payload)
 }
 
 // 获取训练日志
@@ -75,7 +76,7 @@ export const getTrainingLog = async (jobId: string): Promise<TrainLog[]> => {
       content: log.substring(22)
     })) || [])
   }
-  return http.get<TrainLog[]>(`/api/training/jobs/${jobId}/log`)
+  return http.get<any, TrainLog[]>(`/api/training/jobs/${jobId}/log`)
 }
 
 // 获取训练结果
@@ -87,15 +88,17 @@ export const getTrainingResult = async (jobId: string): Promise<TrainResult | nu
     }
     return Promise.resolve({
       jobId,
-      mae: job.mae!,
-      mape: job.mape!,
-      rmse: job.rmse!,
-      r2: job.r2!,
       modelVersion: `v${Math.floor(Math.random() * 2)}.${Math.floor(Math.random() * 10)}.${Math.floor(Math.random() * 10)}`,
-      modelPath: `/model_store/${jobId}`,
-      featureCount: 13,
-      trainTime: Math.floor(Math.random() * 600) + 300
+      status: job.status as TrainResult['status'],
+      metrics: {
+        mae: job.mae || 0,
+        mape: job.mape || 0,
+        rmse: job.rmse || 0,
+        r2: job.r2 || 0
+      },
+      features: [],
+      createdAt: job.endedAt || job.startedAt
     })
   }
-  return http.get<TrainResult>(`/api/training/jobs/${jobId}`)
+  return http.get<any, TrainResult>(`/api/training/jobs/${jobId}`)
 }

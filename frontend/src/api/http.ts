@@ -45,7 +45,7 @@ http.interceptors.response.use(
       const { status, data } = error.response
       switch (status) {
         case 400:
-          errorMsg = data?.message || '请求参数错误'
+          errorMsg = data?.detail || data?.message || '请求参数错误'
           break
         case 401:
           errorMsg = '未授权，请重新登录'
@@ -58,7 +58,7 @@ http.interceptors.response.use(
           errorMsg = '请求的资源不存在'
           break
         case 500:
-          errorMsg = data?.message || '服务器内部错误'
+          errorMsg = data?.detail || data?.message || '服务器内部错误'
           break
         default:
           errorMsg = `请求错误，状态码：${status}`

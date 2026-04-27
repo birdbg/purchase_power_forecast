@@ -12,6 +12,29 @@ export interface PredictionRecord {
   createdAt: string
 }
 
+export interface PredictParams {
+  pageSize?: number
+  page?: number
+  date_start?: string
+  date_end?: string
+  model_version?: string
+  status?: string
+}
+
+export interface RunPredictPayload {
+  modelVersion?: string
+  dateRange?: [string, string]
+}
+
+export interface PredictResult {
+  total: number
+  success: number
+  failed: number
+  avgErrorRate: number
+  resultFile?: string
+  records: PredictionRecord[]
+}
+
 // 预测请求参数
 export interface PredictionRequest {
   datetime: string

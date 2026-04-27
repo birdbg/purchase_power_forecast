@@ -102,55 +102,88 @@ const fieldData: DataField[] = [
   }
 ]
 
-// 数据质量检查结果
-const qualityCheckData: QualityCheckResult[] = [
-  {
-    key: '1',
-    checkItem: '日期格式检查',
-    result: 'pass',
-    problemCount: 0,
-    suggestion: '无需处理'
-  },
-  {
-    key: '2',
-    checkItem: '外购电量非空检查',
-    result: 'warning',
-    problemCount: 3,
-    suggestion: '补充缺失值或删除对应记录'
-  },
-  {
-    key: '3',
-    checkItem: '数值范围合理性检查',
-    result: 'fail',
-    problemCount: 7,
-    suggestion: '修正异常值或确认数据真实性'
-  },
-  {
-    key: '4',
-    checkItem: '时间连续性检查',
-    result: 'pass',
-    problemCount: 0,
-    suggestion: '无需处理'
-  },
-  {
-    key: '5',
-    checkItem: '时间粒度一致性检查',
-    result: 'pass',
-    problemCount: 0,
-    suggestion: '无需处理'
-  },
-  {
-    key: '6',
-    checkItem: '重复记录检查',
-    result: 'warning',
-    problemCount: 2,
-    suggestion: '删除重复记录'
-  }
+const requiredFields = [
+  'date',
+  'purchase_power',
+  'total_power',
+  'self_power',
+  'steel_output',
+  'rolling_output',
+  'temperature',
+  'is_holiday',
+  'is_maintenance'
 ]
 
+const numericFields = [
+  'purchase_power',
+  'total_power',
+  'self_power',
+  'steel_output',
+  'rolling_output',
+  'temperature',
+  'purchase_lag_1',
+  'purchase_lag_7',
+  'purchase_rolling_7'
+]
+
+const lagFields = ['purchase_lag_1', 'purchase_lag_7', 'purchase_rolling_7']
+
+const parseCsvLine = (line: string): string[] => {
+  const result: string[] = []
+  let current = ''
+  let inQuotes = false
+
+  for (let i = 0; i < line.length; i += 1) {
+    const char = line[i]
+    const nextChar = line[i + 1]
+    if (char === '"' && inQuotes && nextChar === '"') {
+      current += '"'
+      i += 1
+    } else if (char === '"') {
+      inQuotes = !inQuotes
+    } else if (char === ',' && !inQuotes) {
+      result.push(current.trim())
+      current = ''
+    } else {
+      current += char
+    }
+  }
+  result.push(current.trim())
+  return result
+}
+
+const parseCsv = (text: string): { headers: string[]; rows: Record<string, string>[] } => {
+  const lines = text
+    .replace(/^\uFEFF/, '')
+    .split(/\r?\n/)
+    .filter(line => line.trim().length > 0)
+
+  if (lines.length === 0) {
+    return { headers: [], rows: [] }
+  }
+
+  const headers = parseCsvLine(lines[0]).map(header => header.replace(/^\uFEFF/, '').trim())
+  const rows = lines.slice(1).map(line => {
+    const values = parseCsvLine(line)
+    return headers.reduce<Record<string, string>>((record, header, index) => {
+      record[header] = values[index]?.trim() || ''
+      return record
+    }, {})
+  })
+
+  return { headers, rows }
+}
+
 const DataManagement: React.FC = () => {
-  const [uploading, setUploading] = useState(false)
   const [checking, setChecking] = useState(false)
+  const [historyFile, setHistoryFile] = useState<File | null>(null)
+  const [qualityResults, setQualityResults] = useState<QualityCheckResult[]>([])
+  const [dataSummary, setDataSummary] = useState({
+    rowCount: 0,
+    dateRange: '-',
+    missingCount: 0,
+    abnormalCount: 0
+  })
 
   // 上传历史数据配置
   const historyUploadProps: UploadProps = {
@@ -158,12 +191,15 @@ const DataManagement: React.FC = () => {
     accept: '.csv,.xlsx,.xls',
     showUploadList: false,
     beforeUpload: (file) => {
-      setUploading(true)
-      // 模拟上传
-      setTimeout(() => {
-        setUploading(false)
-        message.success(`历史数据 ${file.name} 上传成功`)
-      }, 1500)
+      setHistoryFile(file)
+      setQualityResults([])
+      setDataSummary({
+        rowCount: 0,
+        dateRange: '-',
+        missingCount: 0,
+        abnormalCount: 0
+      })
+      message.success(`已选择历史数据文件：${file.name}`)
       return false // 阻止自动上传
     }
   }
@@ -174,23 +210,164 @@ const DataManagement: React.FC = () => {
     accept: '.csv,.xlsx,.xls',
     showUploadList: false,
     beforeUpload: (file) => {
-      setUploading(true)
-      // 模拟上传
-      setTimeout(() => {
-        setUploading(false)
-        message.success(`预测输入数据 ${file.name} 上传成功`)
-      }, 1500)
+      message.success(`已选择预测输入数据文件：${file.name}`)
       return false // 阻止自动上传
     }
   }
 
   // 数据质量检查
   const handleQualityCheck = () => {
+    if (!historyFile) {
+      message.warning('请先上传历史数据')
+      return
+    }
+
+    const fileName = historyFile.name.toLowerCase()
+    if (fileName.endsWith('.xlsx') || fileName.endsWith('.xls')) {
+      message.warning('Excel 质量检查暂未支持，请先另存为 CSV')
+      return
+    }
+
+    if (!fileName.endsWith('.csv')) {
+      message.warning('第一版质量检查仅支持 CSV 文件')
+      return
+    }
+
     setChecking(true)
-    setTimeout(() => {
+    const reader = new FileReader()
+    reader.onload = () => {
+      try {
+        const text = String(reader.result || '')
+        const { headers, rows } = parseCsv(text)
+        const headerSet = new Set(headers)
+        const missingRequiredFields = requiredFields.filter(field => !headerSet.has(field))
+
+        const dateMissingCount = headerSet.has('date')
+          ? rows.filter(row => !row.date).length
+          : rows.length
+        const purchaseMissingCount = headerSet.has('purchase_power')
+          ? rows.filter(row => !row.purchase_power).length
+          : rows.length
+
+        let negativeValueCount = 0
+        numericFields.forEach(field => {
+          if (!headerSet.has(field)) return
+          rows.forEach(row => {
+            const value = row[field]
+            if (value !== '' && Number(value) < 0) {
+              negativeValueCount += 1
+            }
+          })
+        })
+
+        const dateCounts = new Map<string, number>()
+        if (headerSet.has('date')) {
+          rows.forEach(row => {
+            if (!row.date) return
+            dateCounts.set(row.date, (dateCounts.get(row.date) || 0) + 1)
+          })
+        }
+        const duplicateDateCount = Array.from(dateCounts.values()).reduce(
+          (sum, count) => sum + Math.max(0, count - 1),
+          0
+        )
+
+        let lagMissingCount = 0
+        lagFields.forEach(field => {
+          if (!headerSet.has(field)) {
+            lagMissingCount += rows.length
+            return
+          }
+          lagMissingCount += rows.filter(row => !row[field]).length
+        })
+
+        const rowCountWarning = rows.length < 30 ? 1 : 0
+        const dates = rows
+          .map(row => row.date)
+          .filter(Boolean)
+          .sort()
+        const dateRange = dates.length > 0 ? `${dates[0]} ~ ${dates[dates.length - 1]}` : '-'
+
+        const results: QualityCheckResult[] = [
+          {
+            key: 'required-fields',
+            checkItem: '必填字段存在检查',
+            result: missingRequiredFields.length > 0 ? 'fail' : 'pass',
+            problemCount: missingRequiredFields.length,
+            suggestion: missingRequiredFields.length > 0
+              ? `缺少字段：${missingRequiredFields.join(', ')}`
+              : '无需处理'
+          },
+          {
+            key: 'date-missing',
+            checkItem: 'date 缺失检查',
+            result: dateMissingCount > 0 ? 'fail' : 'pass',
+            problemCount: dateMissingCount,
+            suggestion: dateMissingCount > 0 ? '补充 date 或删除对应记录' : '无需处理'
+          },
+          {
+            key: 'purchase-power-missing',
+            checkItem: 'purchase_power 缺失检查',
+            result: purchaseMissingCount > 0 ? 'fail' : 'pass',
+            problemCount: purchaseMissingCount,
+            suggestion: purchaseMissingCount > 0 ? '补充外购电量或删除对应记录' : '无需处理'
+          },
+          {
+            key: 'negative-values',
+            checkItem: '数值字段负数检查',
+            result: negativeValueCount > 0 ? 'fail' : 'pass',
+            problemCount: negativeValueCount,
+            suggestion: negativeValueCount > 0 ? '检查并修正负数异常值' : '无需处理'
+          },
+          {
+            key: 'duplicate-date',
+            checkItem: '日期重复检查',
+            result: duplicateDateCount > 0 ? 'warning' : 'pass',
+            problemCount: duplicateDateCount,
+            suggestion: duplicateDateCount > 0 ? '删除或合并重复日期记录' : '无需处理'
+          },
+          {
+            key: 'lag-missing',
+            checkItem: 'lag 字段缺失检查',
+            result: lagMissingCount > 0 ? 'warning' : 'pass',
+            problemCount: lagMissingCount,
+            suggestion: lagMissingCount > 0 ? '重新生成 purchase_lag_1、purchase_lag_7、purchase_rolling_7' : '无需处理'
+          },
+          {
+            key: 'row-count',
+            checkItem: '数据行数检查',
+            result: rowCountWarning > 0 ? 'warning' : 'pass',
+            problemCount: rowCountWarning,
+            suggestion: rowCountWarning > 0 ? '训练数据少于 30 行，建议补充更多历史数据' : '无需处理'
+          }
+        ]
+
+        const totalProblems = results.reduce((sum, item) => sum + item.problemCount, 0)
+        setQualityResults(results)
+        setDataSummary({
+          rowCount: rows.length,
+          dateRange,
+          missingCount: dateMissingCount + purchaseMissingCount + lagMissingCount,
+          abnormalCount: negativeValueCount + duplicateDateCount
+        })
+
+        if (totalProblems === 0) {
+          message.success('数据质量检查通过，未发现问题')
+        } else {
+          message.success(`数据质量检查完成，共发现 ${totalProblems} 个问题`)
+        }
+      } catch (error) {
+        message.error('CSV 解析失败，请检查文件格式')
+        console.error(error)
+      } finally {
+        setChecking(false)
+      }
+    }
+    reader.onerror = () => {
       setChecking(false)
-      message.success('数据质量检查完成，共发现 12 个问题')
-    }, 2000)
+      message.error('文件读取失败，请重新选择 CSV 文件')
+    }
+    reader.readAsText(historyFile, 'utf-8')
   }
 
   // 下载数据模板
@@ -322,12 +499,12 @@ const DataManagement: React.FC = () => {
       <Card bordered={false} style={{ marginBottom: 24 }}>
         <Space wrap>
           <Upload {...historyUploadProps}>
-            <Button icon={<UploadOutlined />} loading={uploading}>
+            <Button icon={<UploadOutlined />}>
               上传历史数据
             </Button>
           </Upload>
           <Upload {...predictUploadProps}>
-            <Button icon={<UploadOutlined />} loading={uploading}>
+            <Button icon={<UploadOutlined />}>
               上传预测输入数据
             </Button>
           </Upload>
@@ -346,7 +523,7 @@ const DataManagement: React.FC = () => {
           <Card>
             <Statistic
               title="历史数据总行数"
-              value={1095}
+              value={dataSummary.rowCount}
               suffix="行"
               valueStyle={{ color: '#1890ff' }}
             />
@@ -356,7 +533,7 @@ const DataManagement: React.FC = () => {
           <Card>
             <Statistic
               title="日期范围"
-              value="2021-01-01 ~ 2023-12-31"
+              value={dataSummary.dateRange}
               valueStyle={{ color: '#722ed1', fontSize: '16px' }}
             />
           </Card>
@@ -365,7 +542,7 @@ const DataManagement: React.FC = () => {
           <Card>
             <Statistic
               title="缺失值数量"
-              value={3}
+              value={dataSummary.missingCount}
               suffix="个"
               valueStyle={{ color: '#faad14' }}
             />
@@ -375,7 +552,7 @@ const DataManagement: React.FC = () => {
           <Card>
             <Statistic
               title="异常值数量"
-              value={7}
+              value={dataSummary.abnormalCount}
               suffix="个"
               valueStyle={{ color: '#ff4d4f' }}
             />
@@ -413,7 +590,7 @@ const DataManagement: React.FC = () => {
       <Card title="数据质量检查结果" bordered={false}>
         <Table
           columns={qualityColumns}
-          dataSource={qualityCheckData}
+          dataSource={qualityResults}
           rowKey="key"
           pagination={false}
         />

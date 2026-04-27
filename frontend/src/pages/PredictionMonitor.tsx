@@ -205,7 +205,7 @@ const PredictionMonitor: React.FC = () => {
       dataIndex: 'status',
       key: 'status',
       width: 100,
-      render: (status) => {
+      render: (status: PredictionRecord['status']) => {
         const config = statusConfig[status]
         return <Tag icon={config.icon} color={config.color}>{config.text}</Tag>
       },
@@ -227,7 +227,7 @@ const PredictionMonitor: React.FC = () => {
   const last7DaysAvgError = 3.8
   const last30DaysAvgError = 4.2
   const maxDayError = 12.3
-  const errorCount = 3
+  const errorCount: number = 3
 
   return (
     <div>
@@ -360,10 +360,7 @@ const PredictionMonitor: React.FC = () => {
                   strokeWidth={2}
                   dot={{
                     r: 3,
-                    fill: (data: any) => {
-                      const val = data.errorRate
-                      return val < 5 ? '#52c41a' : val < 10 ? '#faad14' : '#ff4d4f'
-                    }
+                    fill: '#ff4d4f'
                   }}
                 />
               </LineChart>

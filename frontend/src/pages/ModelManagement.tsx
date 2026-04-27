@@ -1,13 +1,13 @@
 import React, { useState, useEffect } from 'react'
 import {
   Card, Row, Col, Statistic, Table, Tag, Button, Space, Modal,
-  Descriptions, Popconfirm, message, Typography, Badge
+  Descriptions, Popconfirm, message, Typography, Badge, Alert, Empty
 } from 'antd'
 import { getModelList, promoteModel, rollbackModel } from '@/api/modelApi'
 import {
-  EyeOutlined, RocketOutlined, RollbackOutlined, InboxOutlined,
+  EyeOutlined, RocketOutlined, RollbackOutlined,
   CheckCircleOutlined, ClockCircleOutlined, WarningOutlined,
-  CloseCircleOutlined, FileTextOutlined
+  CloseCircleOutlined, InboxOutlined
 } from '@ant-design/icons'
 import type { TableProps } from 'antd'
 
@@ -18,7 +18,7 @@ interface ModelVersion {
   id: string
   version: string
   modelName: string
-  algorithm: 'XGBoost' | 'LightGBM' | 'RandomForest'
+  algorithm: 'random_forest' | 'xgboost' | 'lightgbm'
   status: 'candidate' | 'staging' | 'production' | 'archived' | 'rejected'
   dataRange: string
   mae: number
@@ -34,98 +34,10 @@ interface ModelVersion {
   remark?: string
 }
 
-// 模拟模型版本数据
-const mockModels: ModelVersion[] = [
-  {
-    id: 'MOD20260426001',
-    version: 'v1.2.0',
-    modelName: '外购电预测模型',
-    algorithm: 'RandomForest',
-    status: 'production',
-    dataRange: '2025-01-01 ~ 2026-03-31',
-    mae: 56.8,
-    mape: 4.2,
-    rmse: 72.5,
-    r2: 0.927,
-    createdAt: '2026-04-26 10:35:00',
-    publishedAt: '2026-04-26 11:00:00',
-    createdBy: 'admin',
-    features: ['weekday', 'month', 'is_weekend', 'total_power', 'self_power', 'steel_output', 'rolling_output', 'temperature', 'is_holiday', 'is_maintenance', 'purchase_lag_1', 'purchase_lag_7', 'purchase_rolling_7'],
-    params: { n_estimators: 400, max_depth: 10, min_samples_leaf: 2, random_state: 42 },
-    remark: '当前生产环境模型，效果最优'
-  },
-  {
-    id: 'MOD20260426002',
-    version: 'v1.1.1',
-    modelName: '外购电预测模型',
-    algorithm: 'XGBoost',
-    status: 'staging',
-    dataRange: '2025-01-01 ~ 2026-03-31',
-    mae: 62.3,
-    mape: 4.8,
-    rmse: 78.1,
-    r2: 0.918,
-    createdAt: '2026-04-26 11:20:00',
-    createdBy: 'admin',
-    features: ['weekday', 'month', 'is_weekend', 'total_power', 'self_power', 'steel_output', 'rolling_output', 'temperature', 'is_holiday', 'is_maintenance', 'purchase_lag_1', 'purchase_lag_7', 'purchase_rolling_7'],
-    params: { n_estimators: 500, max_depth: 6, learning_rate: 0.05, subsample: 0.9 }
-  },
-  {
-    id: 'MOD20260425001',
-    version: 'v1.1.0',
-    modelName: '外购电预测模型',
-    algorithm: 'LightGBM',
-    status: 'candidate',
-    dataRange: '2025-01-01 ~ 2026-02-28',
-    mae: 68.5,
-    mape: 5.6,
-    rmse: 85.3,
-    r2: 0.905,
-    createdAt: '2026-04-25 16:10:00',
-    createdBy: 'operator',
-    features: ['weekday', 'month', 'is_weekend', 'total_power', 'self_power', 'steel_output', 'rolling_output', 'temperature', 'is_holiday', 'is_maintenance', 'purchase_lag_1', 'purchase_lag_7', 'purchase_rolling_7'],
-    params: { n_estimators: 500, learning_rate: 0.05, num_leaves: 31, subsample: 0.9 }
-  },
-  {
-    id: 'MOD20260420001',
-    version: 'v1.0.0',
-    modelName: '外购电预测模型',
-    algorithm: 'RandomForest',
-    status: 'archived',
-    dataRange: '2024-01-01 ~ 2025-12-31',
-    mae: 78.2,
-    mape: 7.3,
-    rmse: 98.6,
-    r2: 0.876,
-    createdAt: '2026-04-20 09:30:00',
-    publishedAt: '2026-04-20 10:00:00',
-    createdBy: 'admin',
-    features: ['weekday', 'month', 'is_weekend', 'total_power', 'self_power', 'steel_output', 'rolling_output', 'temperature', 'is_holiday', 'is_maintenance'],
-    params: { n_estimators: 300, max_depth: 8, min_samples_leaf: 3 },
-    remark: '旧版本已归档'
-  },
-  {
-    id: 'MOD20260418001',
-    version: 'v0.9.0',
-    modelName: '外购电预测模型',
-    algorithm: 'XGBoost',
-    status: 'rejected',
-    dataRange: '2024-06-01 ~ 2025-12-31',
-    mae: 95.6,
-    mape: 11.2,
-    rmse: 120.5,
-    r2: 0.812,
-    createdAt: '2026-04-18 14:20:00',
-    createdBy: 'operator',
-    features: ['weekday', 'month', 'is_weekend', 'total_power', 'self_power', 'steel_output'],
-    params: { n_estimators: 400, max_depth: 5 },
-    remark: '误差过大，拒绝上线'
-  }
-]
-
 const ModelManagement: React.FC = () => {
-  const [models, setModels] = useState<ModelVersion[]>(mockModels)
+  const [models, setModels] = useState<ModelVersion[]>([])
   const [loading, setLoading] = useState(false)
+  const [loadError, setLoadError] = useState(false)
   const [detailVisible, setDetailVisible] = useState(false)
   const [currentModel, setCurrentModel] = useState<ModelVersion | null>(null)
 
@@ -135,31 +47,33 @@ const ModelManagement: React.FC = () => {
   // 加载模型列表
   const loadModels = async () => {
     setLoading(true)
+    setLoadError(false)
     try {
       const data = await getModelList()
       // 转换字段适配前端类型
-      const formattedModels = data.map((model: any) => ({
-        id: model.id,
+      const formattedModels: ModelVersion[] = data.map((model: any) => ({
+        id: model.id || model.version,
         version: model.version,
-        modelName: '外购电预测模型',
-        algorithm: model.algorithm === 'random_forest' ? 'RandomForest' :
-                   model.algorithm === 'xgboost' ? 'XGBoost' : 'LightGBM',
+        modelName: model.modelName || '外购电预测模型',
+        algorithm: model.algorithm,
         status: model.status,
-        dataRange: `${model.trainDataStart} ~ ${model.trainDataEnd}`,
-        mae: model.mae,
-        mape: model.mape,
-        rmse: model.rmse,
-        r2: model.r2,
+        dataRange: `${model.trainDataStart || '-'} ~ ${model.trainDataEnd || '-'}`,
+        mae: model.mae || 0,
+        mape: model.mape || 0,
+        rmse: model.rmse || 0,
+        r2: model.r2 || 0,
         createdAt: model.createdAt,
         publishedAt: model.publishedAt,
         createdBy: 'admin',
-        features: model.features,
-        params: model.params,
+        features: model.features || [],
+        params: model.params || {},
         remark: model.remark
       }))
       setModels(formattedModels)
     } catch (error) {
-      message.error('加载模型列表失败')
+      setLoadError(true)
+      setModels([])
+      message.error('模型列表加载失败，请检查后端服务')
       console.error(error)
     } finally {
       setLoading(false)
@@ -205,15 +119,6 @@ const ModelManagement: React.FC = () => {
     }
   }
 
-  // 归档模型
-  const handleArchive = (model: ModelVersion) => {
-    const updated = models.map(m =>
-      m.id === model.id ? { ...m, status: 'archived' as const } : m
-    )
-    setModels(updated)
-    message.success(`模型 ${model.version} 已归档`)
-  }
-
   // 查看详情
   const handleViewDetail = (model: ModelVersion) => {
     setCurrentModel(model)
@@ -246,10 +151,11 @@ const ModelManagement: React.FC = () => {
       key: 'algorithm',
       width: 120,
       render: (alg: string) => {
+        const displayName = alg === 'random_forest' ? 'RandomForest' : alg === 'xgboost' ? 'XGBoost' : 'LightGBM'
         let color = 'blue'
-        if (alg === 'LightGBM') color = 'purple'
-        if (alg === 'XGBoost') color = 'orange'
-        return <Tag color={color}>{alg}</Tag>
+        if (alg === 'lightgbm') color = 'purple'
+        if (alg === 'xgboost') color = 'orange'
+        return <Tag color={color}>{displayName}</Tag>
       }
     },
     {
@@ -350,19 +256,6 @@ const ModelManagement: React.FC = () => {
               </Button>
             </Popconfirm>
           )}
-          {record.status !== 'production' && record.status !== 'archived' && (
-            <Popconfirm
-              title={`确定要归档版本 ${record.version} 吗？`}
-              description="归档后模型将不再出现在可发布列表中，但可以随时回滚。"
-              onConfirm={() => handleArchive(record)}
-              okText="确定"
-              cancelText="取消"
-            >
-              <Button type="link" size="small" danger icon={<InboxOutlined />}>
-                归档
-              </Button>
-            </Popconfirm>
-          )}
         </Space>
       )
     }
@@ -372,8 +265,17 @@ const ModelManagement: React.FC = () => {
     <div>
       <Title level={4} style={{ marginBottom: 24 }}>模型版本管理</Title>
 
+      {loadError && (
+        <Alert
+          message="模型列表加载失败，请检查后端服务"
+          type="error"
+          showIcon
+          style={{ marginBottom: 24 }}
+        />
+      )}
+
       {/* 当前生产模型信息 */}
-      {productionModel && (
+      {productionModel ? (
         <Card bordered={false} style={{ marginBottom: 24, background: 'linear-gradient(135deg, #f0f5ff 0%, #e6f7ff 100%)' }}>
           <Row gutter={[24, 16]}>
             <Col xs={24} sm={6}>
@@ -387,7 +289,7 @@ const ModelManagement: React.FC = () => {
             <Col xs={24} sm={6}>
               <Statistic
                 title="算法"
-                value={productionModel.algorithm}
+                value={productionModel.algorithm === 'random_forest' ? 'RandomForest' : productionModel.algorithm === 'xgboost' ? 'XGBoost' : 'LightGBM'}
                 valueStyle={{ color: '#722ed1' }}
               />
             </Col>
@@ -412,6 +314,13 @@ const ModelManagement: React.FC = () => {
             <Text type="secondary">提示：系统同一时间仅允许一个生产模型，发布新版本后旧版本将自动归档。</Text>
           </div>
         </Card>
+      ) : (
+        <Alert
+          message="暂无生产模型，请发布一个 candidate 模型。"
+          type="warning"
+          showIcon
+          style={{ marginBottom: 24 }}
+        />
       )}
 
       {/* 模型版本列表 */}
@@ -420,6 +329,8 @@ const ModelManagement: React.FC = () => {
           columns={columns}
           dataSource={models}
           rowKey="id"
+          loading={loading}
+          locale={{ emptyText: <Empty description="暂无模型版本，请先在训练任务页面创建训练任务。" /> }}
           pagination={{ pageSize: 10 }}
           scroll={{ x: 1500 }}
         />
@@ -457,14 +368,14 @@ const ModelManagement: React.FC = () => {
               <Descriptions.Item label="算法" span={1}>
                 <Tag
                   color={
-                    currentModel.algorithm === 'RandomForest'
+                    currentModel.algorithm === 'random_forest'
                       ? 'blue'
-                      : currentModel.algorithm === 'LightGBM'
+                      : currentModel.algorithm === 'lightgbm'
                       ? 'purple'
                       : 'orange'
                   }
                 >
-                  {currentModel.algorithm}
+                  {currentModel.algorithm === 'random_forest' ? 'RandomForest' : currentModel.algorithm === 'xgboost' ? 'XGBoost' : 'LightGBM'}
                 </Tag>
               </Descriptions.Item>
               <Descriptions.Item label="创建人" span={1}>

@@ -1,581 +1,284 @@
-import React, { useState } from 'react'
+import React, { useEffect, useMemo, useState } from 'react'
 import {
-  Card, Row, Col, Select, DatePicker, Table, Alert, Statistic,
-  Typography, Space, Tag
+  Alert, Button, Card, Col, Empty, Row, Select, Space, Spin, Statistic,
+  Table, Tag, Typography, message
 } from 'antd'
 import {
-  LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend,
-  BarChart, Bar, ResponsiveContainer, Cell
+  BarChart, Bar, CartesianGrid, Cell, Legend, Line, LineChart,
+  ResponsiveContainer, Tooltip, XAxis, YAxis
 } from 'recharts'
 import type { TableProps } from 'antd'
-import { ArrowUpOutlined, ArrowDownOutlined, CheckCircleOutlined, CloseCircleOutlined } from '@ant-design/icons'
-import dayjs from 'dayjs'
+import { ReloadOutlined, PlayCircleOutlined } from '@ant-design/icons'
+import { getModelList } from '@/api/modelApi'
+import { getModelEvaluation, runModelEvaluation, type EvaluationOutput, type EvaluationSample } from '@/api/evaluationApi'
+import type { ModelVersion } from '@/types/model'
 
-const { RangePicker } = DatePicker
 const { Option } = Select
 const { Title, Text } = Typography
 
-// 定义类型
-interface EvaluationMetrics {
-  mae: number
-  mape: number
-  rmse: number
-  r2: number
-  maxError: number
-  peakMape: number
-  vsProduction: {
-    mae: number
-    mape: number
-    rmse: number
-  }
+const algorithmDisplay = (algorithm: string) => {
+  if (algorithm === 'random_forest') return 'RandomForest'
+  if (algorithm === 'xgboost') return 'XGBoost'
+  if (algorithm === 'lightgbm') return 'LightGBM'
+  return algorithm || '-'
 }
 
-interface PredictionActualItem {
-  date: string
-  actual: number
-  predict: number
-}
-
-interface ErrorTrendItem {
-  date: string
-  errorRate: number
-}
-
-interface ErrorDistributionItem {
-  errorRange: string
-  count: number
-}
-
-interface ScenarioMapeItem {
-  scenario: string
-  mape: number
-}
-
-interface ErrorSampleItem {
-  id: string
-  date: string
-  predict: number
-  actual: number
-  error: number
-  errorRate: number
-  scenario: string
-  reason: string
-}
-
-interface ModelVersionOption {
-  id: string
-  version: string
-  name: string
-}
-
-// 模拟数据
-const mockModelVersions: ModelVersionOption[] = [
-  { id: 'MOD20260426001', version: 'v1.2.0', name: 'RandomForest 最优模型' },
-  { id: 'MOD20260426002', version: 'v1.1.1', name: 'XGBoost 优化版' },
-  { id: 'MOD20260425001', version: 'v1.1.0', name: 'LightGBM 基础版' },
-  { id: 'MOD20260420001', version: 'v1.0.0', name: 'RandomForest 旧版' }
-]
-
-const mockMetrics: EvaluationMetrics = {
-  mae: 56.8,
-  mape: 4.2,
-  rmse: 72.5,
-  r2: 0.927,
-  maxError: 189.3,
-  peakMape: 5.1,
-  vsProduction: {
-    mae: -12.3,
-    mape: -0.8,
-    rmse: -9.7
-  }
-}
-
-// 生成预测实际对比数据
-const generatePredictionActualData = (): PredictionActualItem[] => {
-  const data: PredictionActualItem[] = []
-  for (let i = 0; i < 30; i++) {
-    const date = dayjs().subtract(29 - i, 'day').format('MM-DD')
-    const base = 1200 + Math.random() * 300
-    data.push({
-      date,
-      actual: base,
-      predict: base + (Math.random() - 0.5) * 100
-    })
-  }
-  return data
-}
-
-// 误差趋势数据
-const generateErrorTrendData = (): ErrorTrendItem[] => {
-  const data: ErrorTrendItem[] = []
-  for (let i = 0; i < 30; i++) {
-    const date = dayjs().subtract(29 - i, 'day').format('MM-DD')
-    data.push({
-      date,
-      errorRate: 2 + Math.random() * 6
-    })
-  }
-  return data
-}
-
-// 误差分布数据
-const errorDistributionData: ErrorDistributionItem[] = [
-  { errorRange: '< 2%', count: 124 },
-  { errorRange: '2% ~ 4%', count: 216 },
-  { errorRange: '4% ~ 6%', count: 158 },
-  { errorRange: '6% ~ 8%', count: 67 },
-  { errorRange: '8% ~ 10%', count: 28 },
-  { errorRange: '> 10%', count: 12 }
-]
-
-// 场景MAPE对比
-const scenarioMapeData: ScenarioMapeItem[] = [
-  { scenario: '全部', mape: 4.2 },
-  { scenario: '正常生产', mape: 3.8 },
-  { scenario: '检修', mape: 7.5 },
-  { scenario: '节假日', mape: 6.2 },
-  { scenario: '高负荷', mape: 5.1 }
-]
-
-// 误差最大Top10样本
-const errorSampleData: ErrorSampleItem[] = [
-  {
-    id: '1',
-    date: '2026-04-25',
-    predict: 1526.8,
-    actual: 1716.1,
-    error: 189.3,
-    errorRate: 11.03,
-    scenario: '高负荷',
-    reason: '临时增产计划未纳入特征'
-  },
-  {
-    id: '2',
-    date: '2026-04-20',
-    predict: 982.5,
-    actual: 1128.3,
-    error: 145.8,
-    errorRate: 12.92,
-    scenario: '节假日',
-    reason: '假期补班未识别'
-  },
-  {
-    id: '3',
-    date: '2026-04-18',
-    predict: 1382.6,
-    actual: 1253.2,
-    error: -129.4,
-    errorRate: -10.33,
-    scenario: '检修',
-    reason: '设备检修提前结束'
-  },
-  {
-    id: '4',
-    date: '2026-04-15',
-    predict: 1452.1,
-    actual: 1568.7,
-    error: 116.6,
-    errorRate: 7.43,
-    scenario: '高负荷',
-    reason: '订单超预期'
-  },
-  {
-    id: '5',
-    date: '2026-04-12',
-    predict: 1123.5,
-    actual: 1225.8,
-    error: 102.3,
-    errorRate: 8.35,
-    scenario: '正常生产',
-    reason: '气温突变'
-  },
-  {
-    id: '6',
-    date: '2026-04-10',
-    predict: 1082.6,
-    actual: 986.4,
-    error: -96.2,
-    errorRate: -9.75,
-    scenario: '检修',
-    reason: '临时安排检修'
-  },
-  {
-    id: '7',
-    date: '2026-04-08',
-    predict: 1526.3,
-    actual: 1602.5,
-    error: 76.2,
-    errorRate: 4.75,
-    scenario: '高负荷',
-    reason: '正常波动'
-  },
-  {
-    id: '8',
-    date: '2026-04-05',
-    predict: 852.6,
-    actual: 912.3,
-    error: 59.7,
-    errorRate: 6.54,
-    scenario: '节假日',
-    reason: '部分岗位值班'
-  },
-  {
-    id: '9',
-    date: '2026-04-03',
-    predict: 1326.8,
-    actual: 1278.5,
-    error: -48.3,
-    errorRate: -3.78,
-    scenario: '正常生产',
-    reason: '正常波动'
-  },
-  {
-    id: '10',
-    date: '2026-04-01',
-    predict: 1426.9,
-    actual: 1472.3,
-    error: 45.4,
-    errorRate: 3.08,
-    scenario: '正常生产',
-    reason: '正常波动'
-  }
-]
-
-// 场景标签颜色
-const scenarioColorMap: Record<string, string> = {
-  '正常生产': 'green',
-  '检修': 'orange',
-  '节假日': 'purple',
-  '高负荷': 'red',
-  '全部': 'blue'
+const statusConfig: Record<string, { color: string; text: string }> = {
+  normal: { color: 'success', text: '正常' },
+  warning: { color: 'warning', text: '预警' },
+  abnormal: { color: 'error', text: '异常' }
 }
 
 const ModelEvaluation: React.FC = () => {
-  const [selectedModel, setSelectedModel] = useState<string>('MOD20260426001')
-  const [dateRange, setDateRange] = useState<[dayjs.Dayjs | null, dayjs.Dayjs | null]>([
-    dayjs().subtract(30, 'day'),
-    dayjs()
-  ])
-  const [scenario, setScenario] = useState<string>('all')
+  const [models, setModels] = useState<ModelVersion[]>([])
+  const [selectedVersion, setSelectedVersion] = useState<string>()
+  const [evaluation, setEvaluation] = useState<EvaluationOutput | null>(null)
+  const [loadingModels, setLoadingModels] = useState(false)
+  const [loadingEvaluation, setLoadingEvaluation] = useState(false)
+  const [runningEvaluation, setRunningEvaluation] = useState(false)
+  const [loadError, setLoadError] = useState<string>()
 
-  const predictionActualData = generatePredictionActualData()
-  const errorTrendData = generateErrorTrendData()
+  const loadModels = async () => {
+    setLoadingModels(true)
+    setLoadError(undefined)
+    try {
+      const data = await getModelList()
+      setModels(data)
+      if (data.length > 0) {
+        const production = data.find(model => model.status === 'production')
+        const defaultVersion = production?.version || data[0].version
+        setSelectedVersion(prev => prev || defaultVersion)
+      } else {
+        setSelectedVersion(undefined)
+        setEvaluation(null)
+      }
+    } catch (error: any) {
+      setModels([])
+      setSelectedVersion(undefined)
+      setEvaluation(null)
+      setLoadError(error?.response?.data?.detail || error.message || '模型列表加载失败，请检查后端服务')
+    } finally {
+      setLoadingModels(false)
+    }
+  }
 
-  // 表格列配置
-  const columns: TableProps<ErrorSampleItem>['columns'] = [
+  const loadEvaluation = async (version: string) => {
+    setLoadingEvaluation(true)
+    try {
+      const data = await getModelEvaluation(version)
+      setEvaluation(data)
+    } catch (error: any) {
+      setEvaluation(null)
+      message.error(error?.response?.data?.detail || error.message || '模型评估加载失败')
+    } finally {
+      setLoadingEvaluation(false)
+    }
+  }
+
+  const handleRunEvaluation = async () => {
+    if (!selectedVersion) {
+      message.warning('请先选择模型版本')
+      return
+    }
+    setRunningEvaluation(true)
+    try {
+      const data = await runModelEvaluation(selectedVersion)
+      setEvaluation(data)
+      message.success('模型评估完成')
+    } catch (error: any) {
+      message.error(error?.response?.data?.detail || error.message || '模型评估失败')
+    } finally {
+      setRunningEvaluation(false)
+    }
+  }
+
+  useEffect(() => {
+    loadModels()
+  }, [])
+
+  useEffect(() => {
+    if (selectedVersion) {
+      loadEvaluation(selectedVersion)
+    }
+  }, [selectedVersion])
+
+  const samples = evaluation?.samples || []
+  const predictionActualData = useMemo(() => samples.slice(0, 50).map(sample => ({
+    date: sample.datetime.slice(0, 10),
+    actual: sample.actualValue,
+    predict: sample.predictValue
+  })), [samples])
+
+  const errorTrendData = useMemo(() => samples.slice(0, 50).map(sample => ({
+    date: sample.datetime.slice(0, 10),
+    errorRate: sample.errorRate
+  })), [samples])
+
+  const errorDistributionData = useMemo(() => {
+    const ranges = [
+      { errorRange: '< 2%', count: 0 },
+      { errorRange: '2% ~ 4%', count: 0 },
+      { errorRange: '4% ~ 6%', count: 0 },
+      { errorRange: '6% ~ 8%', count: 0 },
+      { errorRange: '8% ~ 10%', count: 0 },
+      { errorRange: '> 10%', count: 0 }
+    ]
+    samples.forEach(sample => {
+      const rate = Math.abs(sample.errorRate)
+      if (rate < 2) ranges[0].count += 1
+      else if (rate < 4) ranges[1].count += 1
+      else if (rate < 6) ranges[2].count += 1
+      else if (rate < 8) ranges[3].count += 1
+      else if (rate < 10) ranges[4].count += 1
+      else ranges[5].count += 1
+    })
+    return ranges
+  }, [samples])
+
+  const topErrorSamples = useMemo(() => [...samples]
+    .sort((a, b) => Math.abs(b.errorRate) - Math.abs(a.errorRate))
+    .slice(0, 10), [samples])
+
+  const columns: TableProps<EvaluationSample>['columns'] = [
+    { title: '日期', dataIndex: 'datetime', key: 'datetime', width: 160, render: value => value.slice(0, 10) },
+    { title: '预测值', dataIndex: 'predictValue', key: 'predictValue', width: 120, align: 'right', render: value => value.toFixed(2) },
+    { title: '实际值', dataIndex: 'actualValue', key: 'actualValue', width: 120, align: 'right', render: value => value.toFixed(2) },
+    { title: '误差值', dataIndex: 'error', key: 'error', width: 120, align: 'right', render: value => value.toFixed(2) },
+    { title: '误差率', dataIndex: 'errorRate', key: 'errorRate', width: 120, align: 'right', render: value => `${value.toFixed(2)}%` },
     {
-      title: '日期',
-      dataIndex: 'date',
-      key: 'date',
-      width: 120
-    },
-    {
-      title: '预测值',
-      dataIndex: 'predict',
-      key: 'predict',
-      width: 120,
-      align: 'right',
-      render: (val) => val.toFixed(1)
-    },
-    {
-      title: '实际值',
-      dataIndex: 'actual',
-      key: 'actual',
-      width: 120,
-      align: 'right',
-      render: (val) => val.toFixed(1)
-    },
-    {
-      title: '误差值',
-      dataIndex: 'error',
-      key: 'error',
-      width: 120,
-      align: 'right',
-      render: (val) => <span style={{ color: val > 0 ? '#ff4d4f' : '#52c41a' }}>{val.toFixed(1)}</span>
-    },
-    {
-      title: '误差率',
-      dataIndex: 'errorRate',
-      key: 'errorRate',
-      width: 120,
-      align: 'right',
-      render: (val) => (
-        <span style={{ color: Math.abs(val) > 8 ? '#ff4d4f' : Math.abs(val) > 5 ? '#faad14' : '#52c41a', fontWeight: 500 }}>
-          {val.toFixed(2)}%
-        </span>
-      ),
-      sorter: (a, b) => Math.abs(a.errorRate) - Math.abs(b.errorRate)
-    },
-    {
-      title: '场景',
-      dataIndex: 'scenario',
-      key: 'scenario',
-      width: 120,
-      render: (scen) => <Tag color={scenarioColorMap[scen]}>{scen}</Tag>
-    },
-    {
-      title: '可能原因',
-      dataIndex: 'reason',
-      key: 'reason',
-      ellipsis: true
+      title: '状态',
+      dataIndex: 'status',
+      key: 'status',
+      width: 100,
+      render: status => {
+        const config = statusConfig[status] || statusConfig.normal
+        return <Tag color={config.color}>{config.text}</Tag>
+      }
     }
   ]
 
-  // 计算结论
-  const isMeetThreshold = mockMetrics.mape < 5
-  const isBetterThanProduction = mockMetrics.vsProduction.mape < 0
-  let conclusionType: 'success' | 'warning' | 'error' = 'warning'
-  let conclusionText = ''
-  let suggestion = ''
-
-  if (isMeetThreshold && isBetterThanProduction) {
-    conclusionType = 'success'
-    conclusionText = '模型达到上线门槛，且优于当前生产模型'
-    suggestion = '建议：可直接上线'
-  } else if (isMeetThreshold) {
-    conclusionType = 'warning'
-    conclusionText = '模型达到上线门槛，但效果略差于当前生产模型'
-    suggestion = '建议：可上线进行AB测试'
-  } else {
-    conclusionType = 'error'
-    conclusionText = '模型未达到上线门槛'
-    suggestion = '建议：需要补充特征或调整参数优化后再评估'
-  }
+  const metrics = evaluation?.metrics || {}
+  const hasMetrics = evaluation && Object.keys(metrics).length > 0
 
   return (
     <div>
       <Title level={4} style={{ marginBottom: 24 }}>模型效果评估</Title>
 
-      {/* 筛选区域 */}
+      {loadError && <Alert message={loadError} type="error" showIcon style={{ marginBottom: 24 }} />}
+
       <Card bordered={false} style={{ marginBottom: 24 }}>
-        <Row gutter={[24, 16]} align="middle">
-          <Col xs={24} sm={8}>
-            <Text strong style={{ marginRight: 8 }}>模型版本：</Text>
-            <Select
-              value={selectedModel}
-              onChange={setSelectedModel}
-              style={{ width: 'calc(100% - 80px)' }}
-              placeholder="请选择模型版本"
-            >
-              {mockModelVersions.map(model => (
-                <Option key={model.id} value={model.id}>
-                  {model.version} - {model.name}
-                </Option>
-              ))}
-            </Select>
-          </Col>
-          <Col xs={24} sm={8}>
-            <Text strong style={{ marginRight: 8 }}>时间范围：</Text>
-            <RangePicker
-              value={dateRange}
-              onChange={(dates) => setDateRange(dates as [dayjs.Dayjs | null, dayjs.Dayjs | null])}
-              style={{ width: 'calc(100% - 80px)' }}
-            />
-          </Col>
-          <Col xs={24} sm={8}>
-            <Text strong style={{ marginRight: 8 }}>场景筛选：</Text>
-            <Select
-              value={scenario}
-              onChange={setScenario}
-              style={{ width: 'calc(100% - 80px)' }}
-              placeholder="请选择场景"
-            >
-              <Option value="all">全部</Option>
-              <Option value="normal">正常生产</Option>
-              <Option value="maintenance">检修</Option>
-              <Option value="holiday">节假日</Option>
-              <Option value="high_load">高负荷</Option>
-            </Select>
-          </Col>
-        </Row>
+        <Space wrap>
+          <Text strong>模型版本：</Text>
+          <Select
+            value={selectedVersion}
+            onChange={setSelectedVersion}
+            style={{ width: 320 }}
+            placeholder="请选择模型版本"
+            loading={loadingModels}
+            allowClear
+          >
+            {models.map(model => (
+              <Option key={model.version} value={model.version}>
+                {model.version} - {algorithmDisplay(model.algorithm)} - {model.status}
+              </Option>
+            ))}
+          </Select>
+          <Button icon={<ReloadOutlined />} onClick={loadModels} loading={loadingModels}>刷新模型版本</Button>
+          <Button
+            type="primary"
+            icon={<PlayCircleOutlined />}
+            onClick={handleRunEvaluation}
+            loading={runningEvaluation}
+            disabled={!selectedVersion}
+          >
+            执行真实评估
+          </Button>
+        </Space>
       </Card>
 
-      {/* 指标卡片区域 */}
-      <Row gutter={[16, 16]} style={{ marginBottom: 24 }}>
-        <Col xs={24} sm={8} md={4}>
-          <Card>
-            <Statistic
-              title="MAE"
-              value={mockMetrics.mae}
-              precision={1}
-              valueStyle={{ color: '#1890ff' }}
-              suffix={
-                mockMetrics.vsProduction.mae < 0 ?
-                  <span style={{ fontSize: 14, color: '#52c41a', marginLeft: 8 }}>
-                    <ArrowDownOutlined /> {Math.abs(mockMetrics.vsProduction.mae).toFixed(1)}
-                  </span> :
-                  <span style={{ fontSize: 14, color: '#ff4d4f', marginLeft: 8 }}>
-                    <ArrowUpOutlined /> {mockMetrics.vsProduction.mae.toFixed(1)}
-                  </span>
-              }
-            />
-          </Card>
-        </Col>
-        <Col xs={24} sm={8} md={4}>
-          <Card>
-            <Statistic
-              title="MAPE"
-              value={mockMetrics.mape}
-              precision={2}
-              valueStyle={{ color: mockMetrics.mape < 5 ? '#52c41a' : mockMetrics.mape < 8 ? '#faad14' : '#ff4d4f', fontWeight: 600 }}
-              suffix={
-                <Space>
-                  <span>%</span>
-                  {mockMetrics.vsProduction.mape < 0 ?
-                    <span style={{ fontSize: 14, color: '#52c41a' }}>
-                      <ArrowDownOutlined /> {Math.abs(mockMetrics.vsProduction.mape).toFixed(2)}%
-                    </span> :
-                    <span style={{ fontSize: 14, color: '#ff4d4f' }}>
-                      <ArrowUpOutlined /> {mockMetrics.vsProduction.mape.toFixed(2)}%
-                    </span>
-                  }
-                </Space>
-              }
-            />
-          </Card>
-        </Col>
-        <Col xs={24} sm={8} md={4}>
-          <Card>
-            <Statistic
-              title="RMSE"
-              value={mockMetrics.rmse}
-              precision={1}
-              valueStyle={{ color: '#722ed1' }}
-              suffix={
-                mockMetrics.vsProduction.rmse < 0 ?
-                  <span style={{ fontSize: 14, color: '#52c41a', marginLeft: 8 }}>
-                    <ArrowDownOutlined /> {Math.abs(mockMetrics.vsProduction.rmse).toFixed(1)}
-                  </span> :
-                  <span style={{ fontSize: 14, color: '#ff4d4f', marginLeft: 8 }}>
-                    <ArrowUpOutlined /> {mockMetrics.vsProduction.rmse.toFixed(1)}
-                  </span>
-              }
-            />
-          </Card>
-        </Col>
-        <Col xs={24} sm={8} md={4}>
-          <Card>
-            <Statistic
-              title="R2"
-              value={mockMetrics.r2}
-              precision={3}
-              valueStyle={{ color: '#13c2c2' }}
-            />
-          </Card>
-        </Col>
-        <Col xs={24} sm={8} md={4}>
-          <Card>
-            <Statistic
-              title="最大误差"
-              value={mockMetrics.maxError}
-              precision={1}
-              valueStyle={{ color: '#fa8c16' }}
-            />
-          </Card>
-        </Col>
-        <Col xs={24} sm={8} md={4}>
-          <Card>
-            <Statistic
-              title="峰值时段MAPE"
-              value={mockMetrics.peakMape}
-              precision={2}
-              suffix="%"
-              valueStyle={{ color: mockMetrics.peakMape < 6 ? '#52c41a' : '#ff4d4f' }}
-            />
-          </Card>
-        </Col>
-      </Row>
+      {loadingModels || loadingEvaluation ? (
+        <Card bordered={false}><Spin tip="加载真实模型评估数据中..." /></Card>
+      ) : models.length === 0 ? (
+        <Card bordered={false}><Empty description="暂无模型版本，请先在训练任务页面创建训练任务。" /></Card>
+      ) : !evaluation ? (
+        <Card bordered={false}><Empty description="暂无该模型评估结果，请点击执行真实评估。" /></Card>
+      ) : (
+        <>
+          <Alert
+            message={`当前评估模型：${evaluation.modelVersion} / ${algorithmDisplay(evaluation.algorithm)}`}
+            description={`训练数据范围：${evaluation.trainDataRange?.[0] || '-'} ~ ${evaluation.trainDataRange?.[1] || '-'}；样本数：${evaluation.totalSamples || samples.length}`}
+            type={hasMetrics ? 'success' : 'warning'}
+            showIcon
+            style={{ marginBottom: 24 }}
+          />
 
-      {/* 图表区域 */}
-      <Row gutter={[16, 16]} style={{ marginBottom: 24 }}>
-        <Col xs={24} lg={12}>
-          <Card title="预测值 vs 实际值" bordered={false}>
-            <ResponsiveContainer width="100%" height={300}>
-              <LineChart data={predictionActualData}>
-                <CartesianGrid strokeDasharray="3 3" />
-                <XAxis dataKey="date" />
-                <YAxis />
-                <Tooltip />
-                <Legend />
-                <Line type="monotone" dataKey="actual" stroke="#1890ff" name="实际值" strokeWidth={2} />
-                <Line type="monotone" dataKey="predict" stroke="#52c41a" name="预测值" strokeWidth={2} />
-              </LineChart>
-            </ResponsiveContainer>
-          </Card>
-        </Col>
-        <Col xs={24} lg={12}>
-          <Card title="误差率趋势" bordered={false}>
-            <ResponsiveContainer width="100%" height={300}>
-              <LineChart data={errorTrendData}>
-                <CartesianGrid strokeDasharray="3 3" />
-                <XAxis dataKey="date" />
-                <YAxis />
-                <Tooltip formatter={(val) => [`${Number(val).toFixed(2)}%`, '误差率']} />
-                <Legend />
-                <Line type="monotone" dataKey="errorRate" stroke="#ff4d4f" name="误差率" strokeWidth={2} />
-              </LineChart>
-            </ResponsiveContainer>
-          </Card>
-        </Col>
-        <Col xs={24} lg={12}>
-          <Card title="误差分布" bordered={false}>
-            <ResponsiveContainer width="100%" height={300}>
-              <BarChart data={errorDistributionData}>
-                <CartesianGrid strokeDasharray="3 3" />
-                <XAxis dataKey="errorRange" />
-                <YAxis />
-                <Tooltip />
-                <Bar dataKey="count" name="样本数">
-                  {errorDistributionData.map((entry, index) => (
-                    <Cell key={`cell-${index}`} fill={index < 3 ? '#52c41a' : index < 5 ? '#faad14' : '#ff4d4f'} />
-                  ))}
-                </Bar>
-              </BarChart>
-            </ResponsiveContainer>
-          </Card>
-        </Col>
-        <Col xs={24} lg={12}>
-          <Card title="不同场景MAPE对比" bordered={false}>
-            <ResponsiveContainer width="100%" height={300}>
-              <BarChart data={scenarioMapeData}>
-                <CartesianGrid strokeDasharray="3 3" />
-                <XAxis dataKey="scenario" />
-                <YAxis />
-                <Tooltip formatter={(val) => [`${Number(val).toFixed(2)}%`, 'MAPE']} />
-                <Bar dataKey="mape" name="MAPE">
-                  {scenarioMapeData.map((entry, index) => (
-                    <Cell key={`cell-${index}`} fill={entry.mape < 5 ? '#52c41a' : entry.mape < 8 ? '#faad14' : '#ff4d4f'} />
-                  ))}
-                </Bar>
-              </BarChart>
-            </ResponsiveContainer>
-          </Card>
-        </Col>
-      </Row>
+          <Row gutter={[16, 16]} style={{ marginBottom: 24 }}>
+            <Col xs={24} sm={12} md={6}><Card><Statistic title="MAE" value={metrics.mae || 0} precision={2} /></Card></Col>
+            <Col xs={24} sm={12} md={6}><Card><Statistic title="MAPE" value={metrics.mape || 0} precision={2} suffix="%" /></Card></Col>
+            <Col xs={24} sm={12} md={6}><Card><Statistic title="RMSE" value={metrics.rmse || 0} precision={2} /></Card></Col>
+            <Col xs={24} sm={12} md={6}><Card><Statistic title="R2" value={metrics.r2 || 0} precision={4} /></Card></Col>
+          </Row>
 
-      {/* 误差最大Top10样本 */}
-      <Card title="误差最大Top 10样本" bordered={false} style={{ marginBottom: 24 }}>
-        <Table
-          columns={columns}
-          dataSource={errorSampleData}
-          rowKey="id"
-          pagination={false}
-          scroll={{ x: 1000 }}
-        />
-      </Card>
+          <Row gutter={[16, 16]} style={{ marginBottom: 24 }}>
+            <Col xs={24} lg={12}>
+              <Card title="预测值 vs 实际值" bordered={false}>
+                {predictionActualData.length > 0 ? (
+                  <ResponsiveContainer width="100%" height={300}>
+                    <LineChart data={predictionActualData}>
+                      <CartesianGrid strokeDasharray="3 3" />
+                      <XAxis dataKey="date" />
+                      <YAxis />
+                      <Tooltip />
+                      <Legend />
+                      <Line type="monotone" dataKey="actual" stroke="#1890ff" name="实际值" strokeWidth={2} />
+                      <Line type="monotone" dataKey="predict" stroke="#52c41a" name="预测值" strokeWidth={2} />
+                    </LineChart>
+                  </ResponsiveContainer>
+                ) : <Empty description="暂无评估样本明细，模型指标来自训练/评估报告。" />}
+              </Card>
+            </Col>
+            <Col xs={24} lg={12}>
+              <Card title="误差率趋势" bordered={false}>
+                {errorTrendData.length > 0 ? (
+                  <ResponsiveContainer width="100%" height={300}>
+                    <LineChart data={errorTrendData}>
+                      <CartesianGrid strokeDasharray="3 3" />
+                      <XAxis dataKey="date" />
+                      <YAxis />
+                      <Tooltip formatter={value => [`${Number(value).toFixed(2)}%`, '误差率']} />
+                      <Legend />
+                      <Line type="monotone" dataKey="errorRate" stroke="#ff4d4f" name="误差率" strokeWidth={2} />
+                    </LineChart>
+                  </ResponsiveContainer>
+                ) : <Empty description="暂无误差率趋势数据" />}
+              </Card>
+            </Col>
+            <Col xs={24} lg={12}>
+              <Card title="误差分布" bordered={false}>
+                {samples.length > 0 ? (
+                  <ResponsiveContainer width="100%" height={300}>
+                    <BarChart data={errorDistributionData}>
+                      <CartesianGrid strokeDasharray="3 3" />
+                      <XAxis dataKey="errorRange" />
+                      <YAxis />
+                      <Tooltip />
+                      <Bar dataKey="count" name="样本数">
+                        {errorDistributionData.map((_, index) => (
+                          <Cell key={`cell-${index}`} fill={index < 3 ? '#52c41a' : index < 5 ? '#faad14' : '#ff4d4f'} />
+                        ))}
+                      </Bar>
+                    </BarChart>
+                  </ResponsiveContainer>
+                ) : <Empty description="暂无误差分布数据" />}
+              </Card>
+            </Col>
+          </Row>
 
-      {/* 结论区域 */}
-      <Alert
-        message={
-          <Space>
-            {conclusionType === 'success' ? <CheckCircleOutlined /> : <CloseCircleOutlined />}
-            <Text strong>{conclusionText}</Text>
-          </Space>
-        }
-        description={suggestion}
-        type={conclusionType}
-        showIcon
-      />
+          <Card title="误差最大 Top 10 样本" bordered={false}>
+            <Table columns={columns} dataSource={topErrorSamples} rowKey="id" pagination={false} locale={{ emptyText: '暂无评估样本明细' }} />
+          </Card>
+        </>
+      )}
     </div>
   )
 }

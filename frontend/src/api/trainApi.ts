@@ -26,17 +26,42 @@ export const getTrainingJobs = async (): Promise<TrainJob[]> => {
   return http.get<TrainJob[]>('/api/training/jobs')
 }
 
+export interface CreateTrainingJobResponse {
+  success: boolean
+  jobId: string
+  modelVersion?: string
+  algorithm?: string
+  metrics?: {
+    mae?: number
+    mape?: number
+    rmse?: number
+    r2?: number
+    max_error?: number
+  }
+  status: 'running' | 'success' | 'failed'
+  message: string
+}
+
 // 创建训练任务
-export const createTrainingJob = async (payload: CreateTrainJobPayload): Promise<{ success: boolean; jobId: string; message: string }> => {
+export const createTrainingJob = async (payload: CreateTrainJobPayload): Promise<CreateTrainingJobResponse> => {
   if (USE_MOCK) {
     const jobId = `JOB${Date.now()}`
     return Promise.resolve({
       success: true,
       jobId,
+      modelVersion: `v${new Date().getFullYear()}${(new Date().getMonth()+1).toString().padStart(2, '0')}${new Date().getDate().toString().padStart(2, '0')}_${new Date().getHours().toString().padStart(2, '0')}${new Date().getMinutes().toString().padStart(2, '0')}`,
+      algorithm: payload.algorithm,
+      metrics: {
+        mae: 10 + Math.random() * 20,
+        mape: 3 + Math.random() * 5,
+        rmse: 12 + Math.random() * 20,
+        r2: 0.8 + Math.random() * 0.19
+      },
+      status: 'success',
       message: '训练任务创建成功，任务ID：' + jobId
     })
   }
-  return http.post<{ success: boolean; jobId: string; message: string }>('/api/training/run', payload)
+  return http.post<CreateTrainingJobResponse>('/api/training/run', payload)
 }
 
 // 获取训练日志

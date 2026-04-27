@@ -20,7 +20,7 @@ const { Option } = Select
 interface TrainingJob {
   id: string
   modelName: string
-  algorithm: 'XGBoost' | 'LightGBM' | 'RandomForest'
+  algorithm: 'random_forest' | 'xgboost' | 'lightgbm'
   dataRange: string
   startTime: string
   endTime?: string
@@ -30,87 +30,11 @@ interface TrainingJob {
   rmse?: number
   createdBy: string
   remark?: string
+  modelVersion?: string
 }
 
-// 模拟训练任务数据
-const mockJobs: TrainingJob[] = [
-  {
-    id: 'JOB20260426001',
-    modelName: '外购电预测模型',
-    algorithm: 'RandomForest',
-    dataRange: '2025-01-01 ~ 2026-03-31',
-    startTime: '2026-04-26 10:30:00',
-    endTime: '2026-04-26 10:32:15',
-    status: 'success',
-    mape: 4.2,
-    mae: 56.8,
-    rmse: 72.5,
-    createdBy: 'admin',
-    remark: '季度重训任务'
-  },
-  {
-    id: 'JOB20260426002',
-    modelName: '外购电预测模型',
-    algorithm: 'XGBoost',
-    dataRange: '2025-01-01 ~ 2026-03-31',
-    startTime: '2026-04-26 11:15:00',
-    endTime: '2026-04-26 11:17:42',
-    status: 'success',
-    mape: 4.8,
-    mae: 62.3,
-    rmse: 78.1,
-    createdBy: 'admin',
-    remark: '新特征测试训练'
-  },
-  {
-    id: 'JOB20260426003',
-    modelName: '外购电预测模型',
-    algorithm: 'LightGBM',
-    dataRange: '2025-01-01 ~ 2026-03-31',
-    startTime: '2026-04-26 14:20:00',
-    status: 'running',
-    createdBy: 'operator',
-    remark: '自动调参训练'
-  },
-  {
-    id: 'JOB20260425001',
-    modelName: '外购电预测模型',
-    algorithm: 'XGBoost',
-    dataRange: '2024-01-01 ~ 2025-12-31',
-    startTime: '2026-04-25 09:10:00',
-    endTime: '2026-04-25 09:12:33',
-    status: 'failed',
-    createdBy: 'admin',
-    remark: '数据缺失训练失败'
-  },
-  {
-    id: 'JOB20260424001',
-    modelName: '外购电预测模型',
-    algorithm: 'RandomForest',
-    dataRange: '2025-06-01 ~ 2026-03-31',
-    startTime: '2026-04-24 16:40:00',
-    endTime: '2026-04-24 16:41:15',
-    status: 'canceled',
-    createdBy: 'operator',
-    remark: '手动取消训练'
-  }
-]
-
-// 模拟训练日志
-const mockLogs = `[2026-04-26 10:30:00] 开始加载训练数据...
-[2026-04-26 10:30:05] 数据加载完成，共153条记录
-[2026-04-26 10:30:06] 开始数据清洗与预处理...
-[2026-04-26 10:30:10] 数据清洗完成，缺失值填充完成
-[2026-04-26 10:30:11] 开始特征工程...
-[2026-04-26 10:30:20] 特征工程完成，共生成13个特征
-[2026-04-26 10:30:21] 开始训练模型，算法：RandomForest
-[2026-04-26 10:31:35] 模型训练完成
-[2026-04-26 10:31:36] 开始评估模型...
-[2026-04-26 10:32:10] 模型评估完成：MAPE=4.2%, MAE=56.8, RMSE=72.5, R²=0.927
-[2026-04-26 10:32:15] 训练任务结束，状态：成功`
-
 const TrainingJobs: React.FC = () => {
-  const [jobs, setJobs] = useState<TrainingJob[]>(mockJobs)
+  const [jobs, setJobs] = useState<TrainingJob[]>([])
   const [loading, setLoading] = useState(false)
   const [submitLoading, setSubmitLoading] = useState(false)
   const [logs, setLogs] = useState<string>('')
@@ -168,47 +92,54 @@ const TrainingJobs: React.FC = () => {
 
   // 新建训练任务
   const handleCreateJob = async (values: any) => {
+    if (submitLoading) return
     setSubmitLoading(true)
     try {
-      // 转换算法名到后端格式
-      const algorithmMap: Record<string, string> = {
-        'RandomForest': 'random_forest',
-        'XGBoost': 'xgboost',
-        'LightGBM': 'lightgbm'
-      }
+      message.loading('模型训练中，请勿重复提交', 0)
       
       const params = {
-        modelName: 'purchase_power',
-        algorithm: algorithmMap[values.algorithm],
+        modelName: values.modelName,
+        algorithm: values.algorithm,
         trainDataStart: values.dataRange[0].format('YYYY-MM-DD'),
         trainDataEnd: values.dataRange[1].format('YYYY-MM-DD'),
         remark: values.remark
       }
       
       const result = await createTrainingJob(params)
+      message.destroy()
       
       if (result.success) {
-        message.success(`训练任务提交成功，模型版本：${result.modelVersion}\nMAPE: ${result.metrics.mape.toFixed(2)}%`)
+        let successMsg = '训练任务提交成功'
+        if (result.modelVersion) {
+          successMsg += `，模型版本：${result.modelVersion}`
+        }
+        if (result.metrics?.mape) {
+          successMsg += `\nMAPE: ${result.metrics.mape.toFixed(2)}%`
+        }
+        message.success(successMsg)
+        
         setModalVisible(false)
         form.resetFields()
         // 刷新列表
         await loadJobs()
         
         // 提示用户去模型管理页面发布
-        Modal.success({
-          title: '训练完成',
-          content: (
-            <div>
-              <p>模型版本：{result.modelVersion}</p>
-              <p>MAPE：{result.metrics.mape.toFixed(2)}%</p>
-              <p>MAE：{result.metrics.mae.toFixed(2)}</p>
-              <p>RMSE：{result.metrics.rmse.toFixed(2)}</p>
-              <p>R²：{result.metrics.r2.toFixed(4)}</p>
-              <hr />
-              <p>请前往模型管理页面发布该模型为生产版本</p>
-            </div>
-          )
-        })
+        if (result.modelVersion && result.metrics) {
+          Modal.success({
+            title: '训练完成',
+            content: (
+              <div>
+                <p>模型版本：{result.modelVersion}</p>
+                {result.metrics.mape && <p>MAPE：{result.metrics.mape.toFixed(2)}%</p>}
+                {result.metrics.mae && <p>MAE：{result.metrics.mae.toFixed(2)}</p>}
+                {result.metrics.rmse && <p>RMSE：{result.metrics.rmse.toFixed(2)}</p>}
+                {result.metrics.r2 && <p>R²：{result.metrics.r2.toFixed(4)}</p>}
+                <hr />
+                <p>请前往模型管理页面发布该模型为生产版本</p>
+              </div>
+            )
+          })
+        }
       }
     } catch (error: any) {
       message.error(`训练失败：${error?.response?.data?.detail || error.message}`)
@@ -267,10 +198,18 @@ const TrainingJobs: React.FC = () => {
       key: 'algorithm',
       width: 120,
       render: (alg: string) => {
+        let displayName = ''
         let color = 'blue'
-        if (alg === 'LightGBM') color = 'purple'
-        if (alg === 'XGBoost') color = 'orange'
-        return <Tag color={color}>{alg}</Tag>
+        if (alg === 'lightgbm') {
+          displayName = 'LightGBM'
+          color = 'purple'
+        } else if (alg === 'xgboost') {
+          displayName = 'XGBoost'
+          color = 'orange'
+        } else if (alg === 'random_forest') {
+          displayName = 'RandomForest'
+        }
+        return <Tag color={color}>{displayName}</Tag>
       }
     },
     {
@@ -468,10 +407,11 @@ const TrainingJobs: React.FC = () => {
             <Input.TextArea rows={3} placeholder="请输入备注信息" />
           </Form.Item>
 
+          <Alert message="模型训练当前为同步执行，提交后请等待完成，请勿重复提交" type="info" showIcon style={{ marginBottom: 16 }} />
           <Form.Item style={{ marginBottom: 0, textAlign: 'right' }}>
             <Space>
-              <Button onClick={() => setModalVisible(false)}>取消</Button>
-              <Button type="primary" htmlType="submit">提交任务</Button>
+              <Button onClick={() => setModalVisible(false)} disabled={submitLoading}>取消</Button>
+              <Button type="primary" htmlType="submit" loading={submitLoading} disabled={submitLoading}>提交任务</Button>
             </Space>
           </Form.Item>
         </Form>
